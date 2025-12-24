@@ -1,9 +1,8 @@
-using A1.Api.Repositories;
 using A1.Api.Models;
-using System.Data;
+using A1.Api.Repositories;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using System.Reflection;
-using Swashbuckle.AspNetCore.Annotations;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,7 +17,8 @@ builder.Services.AddSwaggerGen(c => { c.EnableAnnotations(); });
 
 
 // Configure ADO.NET and Generic Repository
-builder.Services.AddScoped<IDbConnection>(sp => new Microsoft.Data.SqlClient.SqlConnection(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 
 var app = builder.Build();
@@ -113,7 +113,9 @@ app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServi
 {
     var repo = GetRepository(sp, entityName);
     if (repo == null) return Results.NotFound();
-    await ((dynamic)repo).DeleteAsync(id);
+    var entity = await ((dynamic)repo).GetByIdAsync(id);
+    if (entity == null) return Results.NotFound();
+    await ((dynamic)repo).DeleteAsync(entity);
     return Results.NoContent();
 });
 
@@ -127,23 +129,12 @@ object? GetRepository(IServiceProvider sp, string entityName)
 }
 
 // Helper to get entity type by name
-Type? GetEntityType(string entityName)
-{
-    var assembly = Assembly.GetExecutingAssembly();
-    var type = assembly.GetTypes().FirstOrDefault(t => typeof(BaseEntity).IsAssignableFrom(t) && t.Name.Equals(entityName, StringComparison.OrdinalIgnoreCase));
-    if (type != null) return type;
-    string singular = entityName;
-    if (singular.EndsWith("ies", StringComparison.OrdinalIgnoreCase))
-    {
-        singular = singular.Substring(0, singular.Length - 3) + "y";
-    }
-    else if (singular.EndsWith("s", StringComparison.OrdinalIgnoreCase))
-    {
-        singular = singular.Substring(0, singular.Length - 1);
-    }
-    type = assembly.GetTypes().FirstOrDefault(t => typeof(BaseEntity).IsAssignableFrom(t) && t.Name.Equals(singular, StringComparison.OrdinalIgnoreCase));
-    return type;
-}
+        Type? GetEntityType(string entityName)
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            Type? type = assembly.GetTypes().FirstOrDefault(t => typeof(BaseEntity).IsAssignableFrom(t) && t.Name.Equals(entityName, StringComparison.OrdinalIgnoreCase));
+            return type;
+        }
 
 System.Reflection.PropertyInfo GetPrimaryKey(Type type)
 {

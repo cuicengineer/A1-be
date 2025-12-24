@@ -6,7 +6,7 @@ namespace A1.Api.Models
     {
         public string RoleName { get; set; }
         public string Description { get; set; }
-        public int Status { get; set; }
+        public byte? Status { get; set; }
         
         
     }

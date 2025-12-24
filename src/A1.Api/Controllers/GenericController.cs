@@ -67,13 +67,14 @@ namespace A1.Api.Controllers
             return NoContent();
         }
 
-        [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
             var entity = await _repository.GetByIdAsync(id);
-            if (entity == null || IsEntityDeleted(entity)) return NotFound();
-            var rows = await _repository.DeleteAsync(id);
-            if (rows == 0) return NotFound();
+            if (entity == null)
+            {
+                return NotFound();
+            }
+            await _repository.DeleteAsync(entity);
             return NoContent();
         }
 

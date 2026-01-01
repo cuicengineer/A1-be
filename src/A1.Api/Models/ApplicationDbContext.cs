@@ -16,6 +16,12 @@ namespace A1.Api.Models
         public DbSet<Unit> Units { get; set; }
         public DbSet<RentalProperty> RentalProperties { get; set; }
         public DbSet<PropertyGroup> PropertyGroups { get; set; }
+        public DbSet<RevenueRate> RevenueRates { get; set; }
+        public DbSet<FileUpload> FileUploads { get; set; }
+        public DbSet<Tenant> Tenants { get; set; }
+        public DbSet<Contract> Contracts { get; set; }
+        public DbSet<PropertyGroupLinking> PropertyGroupLinkings { get; set; }
+        public DbSet<UserNote> UserNotes { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -23,6 +29,7 @@ namespace A1.Api.Models
 
             modelBuilder.Entity<RentalProperty>().ToTable("RentalProperties", "dbo");
             modelBuilder.Entity<PropertyGroup>().ToTable("PropertyGroups", "dbo");
+            modelBuilder.Entity<UserNote>().ToTable("UserNotes", "dbo");
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {

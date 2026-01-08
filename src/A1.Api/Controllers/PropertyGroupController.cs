@@ -182,12 +182,23 @@ namespace A1.Api.Controllers
                         _context.PropertyGroups.AsNoTracking(),
                         linking => linking.GrpId,
                         group => group.Id,
-                        (linking, group) => new
+                        (linking, group) => new { linking, group }
+                    )
+                    .GroupJoin(
+                        _context.RentalProperties.AsNoTracking(),
+                        lg => lg.linking.PropId,
+                        prop => prop.Id,
+                        (lg, props) => new { lg.linking, lg.group, props }
+                    )
+                    .SelectMany(
+                        x => x.props.DefaultIfEmpty(),
+                        (x, prop) => new
                         {
-                            Id = linking.Id,
-                            GrpId = linking.GrpId,
-                            PropId = linking.PropId,
-                            GroupName = group.GId ?? string.Empty
+                            Id = x.linking.Id,
+                            GrpId = x.linking.GrpId,
+                            PropId = x.linking.PropId,
+                            GroupName = x.group.GId ?? string.Empty,
+                            PropertyName = prop != null ? prop.PId ?? string.Empty : string.Empty
                         }
                     );
 
@@ -302,6 +313,37 @@ namespace A1.Api.Controllers
                 await transaction.RollbackAsync();
                 return StatusCode(500, new { message = "An error occurred while creating the property group.", error = ex.Message });
             }
+        }
+
+        /// <summary>
+        /// POST: Create a single property group linking
+        /// </summary>
+        [HttpPost("Linking")]
+        public async Task<IActionResult> CreatePropertyGroupLinking([FromBody] PropertyGroupLinking request)
+        {
+            if (request == null)
+            {
+                return BadRequest("PropertyGroupLinking data is required.");
+            }
+
+            if (request.GrpId <= 0 || request.PropId <= 0)
+            {
+                return BadRequest("Valid GrpId and PropId are required.");
+            }
+
+            var currentUser = GetCurrentUser();
+            var now = DateTime.UtcNow;
+
+            request.Status ??= true;
+            request.IsDeleted = false;
+            request.ActionDate = now;
+            request.Action = "CREATE";
+            request.ActionBy = currentUser;
+
+            await _context.PropertyGroupLinkings.AddAsync(request);
+            await _context.SaveChangesAsync();
+
+            return CreatedAtAction(nameof(GetByGroupId), new { grpId = request.GrpId }, request);
         }
 
         /// <summary>

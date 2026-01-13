@@ -3,13 +3,51 @@ using A1.Api.Repositories;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
 builder.Services.AddControllers();
-builder.Services.AddCors(o=>o.AddPolicy("AllowFrontend",p=>p.WithOrigins("http://localhost:3000","https://localhost:3000", "http://192.168.18.13:3000", "https://192.168.18.13:3000").AllowAnyHeader().AllowAnyMethod()));
+builder.Services.AddCors(o=>o.AddPolicy("AllowFrontend",p=>p
+    .WithOrigins("https://172.32.3.219:3000","http://localhost:3000","https://localhost:3000", "http://192.168.18.13:3000", "https://192.168.18.13:3000")
+    .AllowAnyHeader()
+    .AllowAnyMethod()
+    .AllowCredentials()));
+
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+
+var jwtSection = builder.Configuration.GetSection("Jwt");
+var key = jwtSection.GetValue<string>("Key") ?? "change-me-secret-key-should-be-strong";
+var issuer = jwtSection.GetValue<string>("Issuer") ?? "A1.Api";
+var audience = jwtSection.GetValue<string>("Audience") ?? "A1.Api";
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}).AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateIssuerSigningKey = true,
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.FromMinutes(1),
+        ValidIssuer = issuer,
+        ValidAudience = audience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key))
+    };
+});
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
@@ -33,8 +71,8 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseCors("AllowFrontend");
-app.UseCors("AllowReact");
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 // Generic Minimal API Endpoints
@@ -44,7 +82,7 @@ app.MapGet("/api/{entityName}", async (string entityName, IServiceProvider sp) =
     if (repo == null) return Results.NotFound();
     var result = await ((dynamic)repo).GetAllAsync();
     return Results.Ok(result);
-});
+}).RequireAuthorization();
 
 app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, IServiceProvider sp) =>
 {
@@ -52,7 +90,7 @@ app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, IServiceP
     if (repo == null) return Results.NotFound();
     var entity = await ((dynamic)repo).GetByIdAsync(id);
     return entity != null ? Results.Ok(entity) : Results.NotFound();
-});
+}).RequireAuthorization();
 
 app.MapPost("/api/{entityName}", async (string entityName, System.Text.Json.JsonElement jsonEntity, IServiceProvider sp) =>
 {
@@ -78,7 +116,7 @@ app.MapPost("/api/{entityName}", async (string entityName, System.Text.Json.Json
     var idValPost = pkPropPost.GetValue(entityObj);
     var idIntPost = Convert.ToInt32(idValPost);
     return Results.Created($"/api/{entityName}/{idIntPost}", entityObj);
-});
+}).RequireAuthorization();
 
 app.MapPut("/api/{entityName}/{id}", async (string entityName, int id, System.Text.Json.JsonElement jsonEntity, IServiceProvider sp) =>
 {
@@ -107,7 +145,7 @@ app.MapPut("/api/{entityName}/{id}", async (string entityName, int id, System.Te
 
     await ((dynamic)repo).UpdateAsync((dynamic)entityObj);
     return Results.NoContent();
-});
+}).RequireAuthorization();
 
 app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServiceProvider sp) =>
 {
@@ -117,7 +155,7 @@ app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServi
     if (entity == null) return Results.NotFound();
     await ((dynamic)repo).DeleteAsync(entity);
     return Results.NoContent();
-});
+}).RequireAuthorization();
 
 // Helper to get the generic repository
 object? GetRepository(IServiceProvider sp, string entityName)

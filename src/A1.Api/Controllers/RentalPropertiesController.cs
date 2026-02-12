@@ -61,6 +61,7 @@ namespace A1.Api.Controllers
                                      Location = r.Location,
                                      Remarks = r.Remarks,
                                      Status = r.Status,
+                                     PropertyType = r.PropertyType,
                                      ActionDate = r.ActionDate,
                                      ActionBy = r.ActionBy,
                                      Action = r.Action,
@@ -100,6 +101,7 @@ namespace A1.Api.Controllers
                                     PId = r.PId,
                                     UoM = r.UoM,
                                     Area = r.Area,
+                                    PropertyType = r.PropertyType,
                                     Location = r.Location,
                                     Remarks = r.Remarks,
                                     Status = r.Status,
@@ -167,7 +169,7 @@ namespace A1.Api.Controllers
             existing.Status = rentalProperty.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
-
+            existing.PropertyType = rentalProperty.PropertyType;
             await _repository.UpdateAsync(existing);
             return NoContent();
         }

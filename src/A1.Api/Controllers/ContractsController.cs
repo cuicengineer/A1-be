@@ -21,6 +21,11 @@ namespace A1.Api.Controllers
         private readonly IGenericRepository<Contract> _repository;
         private readonly ApplicationDbContext _context;
 
+        public class SearchByGrpNameRequest
+        {
+            public string GrpName { get; set; } = string.Empty;
+        }
+
         public ContractsController(IGenericRepository<Contract> repository, ApplicationDbContext context)
         {
             _repository = repository;
@@ -48,7 +53,7 @@ namespace A1.Api.Controllers
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
             Response.Headers["X-Page-Size"] = pageSize.ToString();
 
-            // Join with related tables to get names efficiently using left joins
+            // Join with related tables to get names efficiently using left joins and include rise terms
             var contracts = await (from c in baseQuery
                                    join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
                                        on c.CmdId equals cmd.Id into cmdGroup
@@ -81,6 +86,9 @@ namespace A1.Api.Controllers
                                        c.ContractStartDate,
                                        c.ContractEndDate,
                                        c.CommercialOperationDate,
+                                       c.RiseTermType,
+                                       c.RiseDate,
+                                       c.RiseYear,
                                        c.InitialRentPM,
                                        c.InitialRentPA,
                                        c.PaymentTermMonths,
@@ -92,10 +100,18 @@ namespace A1.Api.Controllers
                                        c.GovtShareCondition,
                                        c.PAFShare,
                                        c.Status,
+                                       c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
                                        c.Action,
-                                       c.IsDeleted
+                                       c.IsDeleted,
+                                       c.userIPAddress,
+                                       c.Remarks,
+                                       ContractRiseTerms = _context.ContractRiseTerms
+                                            .AsNoTracking()
+                                            .Where(r => r.ContractId == c.Id && (r.IsDeleted == null || r.IsDeleted == false))
+                                            .OrderBy(r => r.SequenceNo)
+                                            .ToList()
                                    })
                 .Skip((pageNumber - 1) * pageSize)
                 .Take(pageSize)
@@ -144,6 +160,9 @@ namespace A1.Api.Controllers
                                        c.ContractStartDate,
                                        c.ContractEndDate,
                                        c.CommercialOperationDate,
+                                       c.RiseTermType,
+                                       c.RiseDate,
+                                       c.RiseYear,
                                        c.InitialRentPM,
                                        c.InitialRentPA,
                                        c.PaymentTermMonths,
@@ -155,10 +174,18 @@ namespace A1.Api.Controllers
                                        c.GovtShareCondition,
                                        c.PAFShare,
                                        c.Status,
+                                       c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
                                        c.Action,
-                                       c.IsDeleted
+                                       c.IsDeleted,
+                                       c.userIPAddress,
+                                       c.Remarks,
+                                       ContractRiseTerms = _context.ContractRiseTerms
+                                            .AsNoTracking()
+                                            .Where(r => r.ContractId == c.Id && (r.IsDeleted == null || r.IsDeleted == false))
+                                            .OrderBy(r => r.SequenceNo)
+                                            .ToList()
                                    })
                 .FirstOrDefaultAsync();
 
@@ -184,9 +211,103 @@ namespace A1.Api.Controllers
             // Set IsDeleted = false by default
             contract.IsDeleted = false;
             // ActionDate and Action will be set by the repository
+            using var tx = await _context.Database.BeginTransactionAsync();
+            await _repository.AddAsync(contract); // saves and sets Id
 
-            await _repository.AddAsync(contract);
+            if (contract.ContractRiseTerms != null && contract.ContractRiseTerms.Count > 0)
+            {
+                var now = DateTime.UtcNow;
+                var terms = contract.ContractRiseTerms.Select(term => new ContractRiseTerm
+                {
+                    ContractId = contract.Id,
+                    MonthsInterval = term.MonthsInterval,
+                    RisePercent = term.RisePercent,
+                    SequenceNo = term.SequenceNo,
+                    Status = term.Status,
+                    IsDeleted = false,
+                    Action = "CREATE",
+                    ActionDate = now,
+                    ActionBy = contract.ActionBy
+                }).ToList();
+
+                await _context.ContractRiseTerms.AddRangeAsync(terms);
+                await _context.SaveChangesAsync();
+            }
+
+            await tx.CommitAsync();
             return CreatedAtAction(nameof(GetById), new { id = contract.Id }, contract);
+        }
+
+        /// <summary>
+        /// POST: Search contracts by group name (returns status=true and not deleted)
+        /// </summary>
+        [HttpPost("searchByGrpName")]
+        public async Task<IActionResult> SearchByGrpName([FromBody] SearchByGrpNameRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.GrpName))
+            {
+                return BadRequest("grpName is required.");
+            }
+
+            var grpName = request.GrpName;
+
+            var contracts = await (from c in _context.Contracts
+                                   .AsNoTracking()
+                                   .Where(c => (c.IsDeleted == null || c.IsDeleted == false) && c.Status == true)
+                                   join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
+                                       on c.CmdId equals cmd.Id into cmdGroup
+                                   from cmd in cmdGroup.DefaultIfEmpty()
+                                   join b in _context.Bases.Where(b => b.IsDeleted == null || b.IsDeleted == false)
+                                       on c.BaseId equals b.Id into baseGroup
+                                   from b in baseGroup.DefaultIfEmpty()
+                                   join cls in _context.Classes.Where(cls => cls.IsDeleted == null || cls.IsDeleted == false)
+                                       on c.ClassId equals cls.Id into classGroup
+                                   from cls in classGroup.DefaultIfEmpty()
+                                   join pg in _context.PropertyGroups.Where(pg => pg.IsDeleted == null || pg.IsDeleted == false && pg.GId == grpName)
+                                       on c.GrpId equals pg.Id into pgGroup
+                                   from pg in pgGroup.DefaultIfEmpty()
+                                   where pg != null && pg.GId == grpName
+                                   select new
+                                   {
+                                       c.Id,
+                                       c.ContractNo,
+                                       CmdId = c.CmdId,
+                                       CmdName = cmd != null ? cmd.Name : string.Empty,
+                                       BaseId = c.BaseId,
+                                       BaseName = b != null ? b.Name : string.Empty,
+                                       ClassId = c.ClassId,
+                                       ClassName = cls != null ? cls.Name : string.Empty,
+                                       GrpId = c.GrpId,
+                                       GrpName = pg != null ? (pg.GId ?? string.Empty) : string.Empty,
+                                       c.TenantNo,
+                                       c.BusinessName,
+                                       c.NatureOfBusiness,
+                                       c.ContractStartDate,
+                                       c.ContractEndDate,
+                                       c.CommercialOperationDate,
+                                       c.InitialRentPM,
+                                       c.InitialRentPA,
+                                       c.PaymentTermMonths,
+                                       c.IncreaseRatePercent,
+                                       c.IncreaseIntervalMonths,
+                                       c.SDRateMonths,
+                                       c.SecurityDepositAmount,
+                                       c.RentalValue,
+                                       c.GovtShareCondition,
+                                       c.PAFShare,
+                                       c.Status,
+                                       c.Term,
+                                       c.ActionDate,
+                                       c.ActionBy,
+                                       c.Action,
+                                       c.IsDeleted,
+                                       c.userIPAddress,
+                                       c.Remarks
+                                   })
+                .OrderByDescending(x => x.Id)
+                .ToListAsync();
+
+            return Ok(contracts);
         }
 
         /// <summary>
@@ -231,6 +352,9 @@ namespace A1.Api.Controllers
             existingContract.ContractStartDate = contract.ContractStartDate;
             existingContract.ContractEndDate = contract.ContractEndDate;
             existingContract.CommercialOperationDate = contract.CommercialOperationDate;
+            existingContract.RiseTermType = contract.RiseTermType;
+            existingContract.RiseDate = contract.RiseDate;
+            existingContract.RiseYear = contract.RiseYear;
             existingContract.InitialRentPM = contract.InitialRentPM;
             existingContract.InitialRentPA = contract.InitialRentPA;
             existingContract.PaymentTermMonths = contract.PaymentTermMonths;
@@ -242,8 +366,51 @@ namespace A1.Api.Controllers
             existingContract.GovtShareCondition = contract.GovtShareCondition;
             existingContract.PAFShare = contract.PAFShare;
             existingContract.Status = contract.Status;
+            existingContract.Term = contract.Term;
             existingContract.ActionDate = DateTime.UtcNow;
             existingContract.Action = "UPDATE";
+            existingContract.userIPAddress = contract.userIPAddress;
+            existingContract.Remarks = contract.Remarks;
+
+            if (contract.ContractRiseTerms != null && contract.ContractRiseTerms.Count > 0)
+            {
+                var now = DateTime.UtcNow;
+                foreach (var term in contract.ContractRiseTerms)
+                {
+                    var existingTerm = await _context.ContractRiseTerms
+                        .FirstOrDefaultAsync(t => t.ContractId == existingContract.Id
+                            && t.SequenceNo == term.SequenceNo
+                            && (t.IsDeleted == null || t.IsDeleted == false));
+
+                    if (existingTerm != null)
+                    {
+                        existingTerm.MonthsInterval = term.MonthsInterval;
+                        existingTerm.RisePercent = term.RisePercent;
+                        existingTerm.SequenceNo = term.SequenceNo;
+                        existingTerm.Status = term.Status;
+                        existingTerm.ActionDate = now;
+                        existingTerm.Action = "UPDATE";
+                        existingTerm.ActionBy = existingContract.ActionBy;
+                        _context.ContractRiseTerms.Update(existingTerm);
+                    }
+                    else
+                    {
+                        var newTerm = new ContractRiseTerm
+                        {
+                            ContractId = existingContract.Id,
+                            MonthsInterval = term.MonthsInterval,
+                            RisePercent = term.RisePercent,
+                            SequenceNo = term.SequenceNo,
+                            Status = term.Status,
+                            IsDeleted = false,
+                            ActionDate = now,
+                            Action = "CREATE",
+                            ActionBy = existingContract.ActionBy
+                        };
+                        await _context.ContractRiseTerms.AddAsync(newTerm);
+                    }
+                }
+            }
 
             await _repository.UpdateAsync(existingContract);
             return NoContent();
@@ -253,7 +420,7 @@ namespace A1.Api.Controllers
         /// DELETE: Soft delete a contract (sets IsDeleted = true)
         /// </summary>
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        public async Task<IActionResult> Delete(int id, [FromBody] string userIPAddress)
         {
             var contract = await _context.Contracts
                 .FirstOrDefaultAsync(c => c.Id == id && (c.IsDeleted == null || c.IsDeleted == false));
@@ -267,6 +434,7 @@ namespace A1.Api.Controllers
             contract.IsDeleted = true;
             contract.Action = "DELETE";
             contract.ActionDate = DateTime.UtcNow;
+            contract.userIPAddress = userIPAddress;
 
             _context.Contracts.Update(contract);
             await _context.SaveChangesAsync();

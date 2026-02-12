@@ -12,6 +12,7 @@ namespace A1.Api.Models
         public decimal? Area { get; set; }
         public string? Location { get; set; }
         public string? Remarks { get; set; }
+        public int? PropertyType { get; set; }
         public bool? Status { get; set; }
     }
 }

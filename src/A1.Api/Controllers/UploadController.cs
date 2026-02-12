@@ -289,7 +289,8 @@ namespace A1.Api.Controllers
                             {
                                 id = fileUpload.Id,
                                 fileName = fileName,
-                                path = downloadUrl,
+                                // keep the stored relative path from DB (e.g. Uploads/Table/Id/file.ext)
+                                path = fileUpload.Path,
                                 size = fileInfo.Length,
                                 sizeFormatted = FormatFileSize(fileInfo.Length),
                                 uploadedDate = fileUpload.UploadedDate,

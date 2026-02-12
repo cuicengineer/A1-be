@@ -21,7 +21,12 @@ namespace A1.Api.Models
         public DbSet<Tenant> Tenants { get; set; }
         public DbSet<Contract> Contracts { get; set; }
         public DbSet<PropertyGroupLinking> PropertyGroupLinkings { get; set; }
+        public DbSet<ContractRiseTerm> ContractRiseTerms { get; set; }
+        public DbSet<RentalValueGovtShareRate> RentalValueGovtShareRates { get; set; }
         public DbSet<UserNote> UserNotes { get; set; }
+        public DbSet<SharingFormula> SharingFormulas { get; set; }
+        public DbSet<BankList> BankLists { get; set; }
+        public DbSet<PropertyType> PropertyTypes { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -29,6 +34,7 @@ namespace A1.Api.Models
 
             modelBuilder.Entity<RentalProperty>().ToTable("RentalProperties", "dbo");
             modelBuilder.Entity<PropertyGroup>().ToTable("PropertyGroups", "dbo");
+            modelBuilder.Entity<ContractRiseTerm>().ToTable("ContractRiseTerms", "dbo");
             modelBuilder.Entity<UserNote>().ToTable("UserNotes", "dbo");
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())

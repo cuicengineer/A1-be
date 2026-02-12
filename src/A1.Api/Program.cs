@@ -17,8 +17,18 @@ builder.Services.AddAuthorization(options =>
         .Build();
 });
 builder.Services.AddControllers();
-builder.Services.AddCors(o=>o.AddPolicy("AllowFrontend",p=>p
-    .WithOrigins("https://172.32.3.219:3000","http://localhost:3000","https://localhost:3000", "http://192.168.18.13:3000", "https://192.168.18.13:3000")
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? new[]
+{
+    "https://172.32.3.219:3000",
+    "http://172.32.3.219:3000",
+    "http://localhost:3000",
+    "https://localhost:3000",
+    "http://192.168.18.13:3000",
+    "https://192.168.18.13:3000"
+};
+
+builder.Services.AddCors(o => o.AddPolicy("AllowFrontend", p => p
+    .WithOrigins(allowedOrigins)
     .AllowAnyHeader()
     .AllowAnyMethod()
     .AllowCredentials()));
@@ -82,7 +92,7 @@ app.MapGet("/api/{entityName}", async (string entityName, IServiceProvider sp) =
     if (repo == null) return Results.NotFound();
     var result = await ((dynamic)repo).GetAllAsync();
     return Results.Ok(result);
-}).RequireAuthorization();
+}).RequireAuthorization().RequireCors("AllowFrontend");
 
 app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, IServiceProvider sp) =>
 {
@@ -90,7 +100,7 @@ app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, IServiceP
     if (repo == null) return Results.NotFound();
     var entity = await ((dynamic)repo).GetByIdAsync(id);
     return entity != null ? Results.Ok(entity) : Results.NotFound();
-}).RequireAuthorization();
+}).RequireAuthorization().RequireCors("AllowFrontend");
 
 app.MapPost("/api/{entityName}", async (string entityName, System.Text.Json.JsonElement jsonEntity, IServiceProvider sp) =>
 {
@@ -116,7 +126,7 @@ app.MapPost("/api/{entityName}", async (string entityName, System.Text.Json.Json
     var idValPost = pkPropPost.GetValue(entityObj);
     var idIntPost = Convert.ToInt32(idValPost);
     return Results.Created($"/api/{entityName}/{idIntPost}", entityObj);
-}).RequireAuthorization();
+}).RequireAuthorization().RequireCors("AllowFrontend");
 
 app.MapPut("/api/{entityName}/{id}", async (string entityName, int id, System.Text.Json.JsonElement jsonEntity, IServiceProvider sp) =>
 {
@@ -145,7 +155,7 @@ app.MapPut("/api/{entityName}/{id}", async (string entityName, int id, System.Te
 
     await ((dynamic)repo).UpdateAsync((dynamic)entityObj);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization().RequireCors("AllowFrontend");
 
 app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServiceProvider sp) =>
 {
@@ -155,7 +165,7 @@ app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServi
     if (entity == null) return Results.NotFound();
     await ((dynamic)repo).DeleteAsync(entity);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization().RequireCors("AllowFrontend");
 
 // Helper to get the generic repository
 object? GetRepository(IServiceProvider sp, string entityName)

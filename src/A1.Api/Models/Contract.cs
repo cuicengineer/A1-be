@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace A1.Api.Models
 {
@@ -24,8 +26,17 @@ namespace A1.Api.Models
         public decimal? SecurityDepositAmount { get; set; }
         public decimal? RentalValue { get; set; }
         public string GovtShareCondition { get; set; } = string.Empty;
+        public string? Term { get; set; } = string.Empty;
+        public string? RiseTermType { get; set; }
+        public DateTime? RiseDate { get; set; }
+        public int? RiseYear { get; set; }
         public decimal? PAFShare { get; set; }
         public bool Status { get; set; }
+        public string? userIPAddress { get; set; }
+        public string? Remarks { get; set; }
+
+        [NotMapped]
+        public List<ContractRiseTerm>? ContractRiseTerms { get; set; }
     }
 }
 

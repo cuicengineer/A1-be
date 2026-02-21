@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -29,6 +30,8 @@ namespace A1.Api.Controllers
             // Always fetch via EF Core, then bind additional ids if the entity exposes them
             var entities = await _repository.GetAllAsync();
             var filteredEntities = FilterNotDeleted(entities).ToList();
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            filteredEntities = FilterByScope(filteredEntities, scope).ToList();
 
             var entityType = filteredEntities.FirstOrDefault()?.GetType() ?? typeof(T);
             var hasCmdId = HasProperty(entityType, "cmdId");
@@ -141,6 +144,11 @@ namespace A1.Api.Controllers
             {
                 return NotFound();
             }
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            if (!CanAccessEntity(entity, scope))
+            {
+                return NotFound();
+            }
 
             // Check if entity has CmdId, BaseId, ClassId properties and enrich with names
             var entityType = entity.GetType();
@@ -240,6 +248,43 @@ namespace A1.Api.Controllers
             var prop = typeof(T).GetProperty("IsDeleted", BindingFlags.Public | BindingFlags.Instance);
             if (prop == null) return entities;
             return entities.Where(e => !IsMarkedDeleted(prop.GetValue(e), prop.PropertyType));
+        }
+
+        private static IEnumerable<T> FilterByScope(IEnumerable<T> entities, DataAccessScope scope)
+        {
+            if (scope.IsAhq) return entities;
+            return entities.Where(e => CanAccessEntity(e, scope));
+        }
+
+        private static bool CanAccessEntity(T entity, DataAccessScope scope)
+        {
+            if (scope.IsAhq) return true;
+
+            var entityType = entity.GetType();
+            var cmdProp = entityType.GetProperty("CmdId", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            var baseProp = entityType.GetProperty("BaseId", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+
+            int? cmdId = GetNullableInt(cmdProp?.GetValue(entity));
+            int? baseId = GetNullableInt(baseProp?.GetValue(entity));
+
+            if (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase))
+            {
+                var cmdOk = cmdProp == null || (scope.CmdId.HasValue && cmdId == scope.CmdId.Value);
+                var baseOk = baseProp == null
+                    || (scope.BaseId.HasValue && baseId == scope.BaseId.Value)
+                    || (!scope.BaseId.HasValue && baseId.HasValue && scope.AllowedBaseIds.Contains(baseId.Value));
+                return cmdOk && baseOk;
+            }
+
+            // Base-level default
+            if (baseProp == null) return true;
+            return scope.BaseId.HasValue && baseId == scope.BaseId.Value;
+        }
+
+        private static int? GetNullableInt(object? value)
+        {
+            if (value == null) return null;
+            return int.TryParse(value.ToString(), out var parsed) ? parsed : null;
         }
     }
 }

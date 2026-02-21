@@ -13,5 +13,6 @@ namespace A1.Api.Models
         public string? Location { get; set; }
         public string? Remarks { get; set; }
         public bool? Status { get; set; }
+        public decimal? Rate { get; set; }
     }
 }

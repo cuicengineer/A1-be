@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -29,6 +30,8 @@ namespace A1.Api.Controllers
             var baseQuery = _context.RentalProperties
                 .AsNoTracking()
                 .Where(r => r.IsDeleted == null || r.IsDeleted == false);
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
 
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
@@ -71,15 +74,24 @@ namespace A1.Api.Controllers
                 .Take(pageSize)
                 .ToListAsync();
 
-            return Ok(payload);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                payload.Select(x => x.Id),
+                "RentalProperties", "RentalProperty");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(payload, x => x.Id, attachedIds);
+            return Ok(response);
         }
 
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var rental = await (from r in _context.RentalProperties
-                                .AsNoTracking()
-                                .Where(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false))
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            var baseQuery = _context.RentalProperties
+                .AsNoTracking()
+                .Where(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false));
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
+
+            var rental = await (from r in baseQuery
                                 join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
                                     on r.CmdId equals cmd.Id into cmdGroup
                                 from cmd in cmdGroup.DefaultIfEmpty()
@@ -117,7 +129,11 @@ namespace A1.Api.Controllers
                 return NotFound();
             }
 
-            return Ok(rental);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                new[] { rental.Id },
+                "RentalProperties", "RentalProperty");
+            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(rental, attachedIds.Contains(rental.Id)));
         }
 
         [HttpPost]

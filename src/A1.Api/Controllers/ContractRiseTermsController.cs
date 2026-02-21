@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -24,23 +25,89 @@ namespace A1.Api.Controllers
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            var scopedContractIds = DataAccessScopeHelper.ApplyScope(
+                    _context.Contracts.AsNoTracking().Where(c => c.IsDeleted == null || c.IsDeleted == false),
+                    scope)
+                .Select(c => c.Id);
+
             var items = await _context.ContractRiseTerms
                 .AsNoTracking()
-                .Where(c => c.IsDeleted == null || c.IsDeleted == false)
+                .Where(c => (c.IsDeleted == null || c.IsDeleted == false) && scopedContractIds.Contains(c.ContractId))
                 .OrderByDescending(c => c.Id)
                 .ToListAsync();
-            return Ok(items);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                items.Select(x => x.Id),
+                "ContractRiseTerms", "ContractRiseTerm");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(items, x => x.Id, attachedIds);
+            return Ok(response);
         }
 
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            var scopedContractIds = DataAccessScopeHelper.ApplyScope(
+                    _context.Contracts.AsNoTracking().Where(c => c.IsDeleted == null || c.IsDeleted == false),
+                    scope)
+                .Select(c => c.Id);
+
             var item = await _context.ContractRiseTerms
                 .AsNoTracking()
-                .FirstOrDefaultAsync(c => c.Id == id && (c.IsDeleted == null || c.IsDeleted == false));
+                .FirstOrDefaultAsync(c => c.Id == id
+                                          && (c.IsDeleted == null || c.IsDeleted == false)
+                                          && scopedContractIds.Contains(c.ContractId));
 
             if (item == null) return NotFound();
-            return Ok(item);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                new[] { item.Id },
+                "ContractRiseTerms", "ContractRiseTerm");
+            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(item, attachedIds.Contains(item.Id)));
+        }
+
+        /// <summary>
+        /// GET: Get all contract rise terms by ContractId (only returns records where IsDeleted = 0 or null)
+        /// GET /api/ContractRiseTerms/ByContract/{contractId} - Get all rise terms for a contract
+        /// </summary>
+        [HttpGet("ByContract/{contractId}")]
+        public async Task<IActionResult> GetByContractId(int contractId)
+        {
+            if (contractId <= 0)
+            {
+                return BadRequest("Valid contractId is required.");
+            }
+
+            // Check if user has access to this contract
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            var scopedContractIds = await DataAccessScopeHelper.ApplyScope(
+                    _context.Contracts.AsNoTracking().Where(c => c.IsDeleted == null || c.IsDeleted == false),
+                    scope)
+                .Select(c => c.Id)
+                .ToListAsync();
+
+            // Verify the contract exists and user has access
+            if (!scopedContractIds.Contains(contractId))
+            {
+                return NotFound("Contract not found or access denied.");
+            }
+
+            // Get all non-deleted rise terms for this contract, ordered by sequence
+            var items = await _context.ContractRiseTerms
+                .AsNoTracking()
+                .Where(c => c.ContractId == contractId && (c.IsDeleted == null || c.IsDeleted == false))
+                .OrderBy(c => c.SequenceNo)
+                .ToListAsync();
+
+            // Add attachment flags
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                items.Select(x => x.Id),
+                "ContractRiseTerms", "ContractRiseTerm");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(items, x => x.Id, attachedIds);
+
+            return Ok(response);
         }
 
         [HttpPost]

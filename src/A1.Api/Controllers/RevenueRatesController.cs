@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -26,6 +27,7 @@ namespace A1.Api.Controllers
             if (pageSize <= 0) pageSize = 50;
             if (pageSize > 200) pageSize = 200;
 
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
             var baseQuery = _context.RevenueRates
                 .AsNoTracking()
                 .Where(r => r.IsDeleted == null || r.IsDeleted == false);
@@ -39,6 +41,15 @@ namespace A1.Api.Controllers
                                  join p in _context.RentalProperties.Where(p => p.IsDeleted == null || p.IsDeleted == false)
                                      on r.PropertyId equals p.Id into propertyGroup
                                  from p in propertyGroup.DefaultIfEmpty()
+                                 where scope.IsAhq
+                                       || (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase)
+                                           && scope.BaseId.HasValue && p != null && p.BaseId == scope.BaseId.Value)
+                                       || (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase)
+                                           && scope.CmdId.HasValue
+                                           && p != null
+                                           && p.CmdId == scope.CmdId.Value
+                                           && ((scope.BaseId.HasValue && p.BaseId == scope.BaseId.Value)
+                                               || (!scope.BaseId.HasValue && scope.AllowedBaseIds.Contains(p.BaseId))))
                                  join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
                                      on p.CmdId equals cmd.Id into cmdGroup
                                  from cmd in cmdGroup.DefaultIfEmpty()
@@ -77,18 +88,33 @@ namespace A1.Api.Controllers
                 .Take(pageSize)
                 .ToListAsync();
 
-            return Ok(payload);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                payload.Select(x => x.Id),
+                "RevenueRates", "RevenueRate");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(payload, x => x.Id, attachedIds);
+            return Ok(response);
         }
 
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
             var revenueRate = await (from r in _context.RevenueRates
                                      .AsNoTracking()
                                      .Where(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false))
                                      join p in _context.RentalProperties.Where(p => p.IsDeleted == null || p.IsDeleted == false)
                                          on r.PropertyId equals p.Id into propertyGroup
                                      from p in propertyGroup.DefaultIfEmpty()
+                                     where scope.IsAhq
+                                           || (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase)
+                                               && scope.BaseId.HasValue && p != null && p.BaseId == scope.BaseId.Value)
+                                           || (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase)
+                                               && scope.CmdId.HasValue
+                                               && p != null
+                                               && p.CmdId == scope.CmdId.Value
+                                               && ((scope.BaseId.HasValue && p.BaseId == scope.BaseId.Value)
+                                                   || (!scope.BaseId.HasValue && scope.AllowedBaseIds.Contains(p.BaseId))))
                                      join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
                                          on p.CmdId equals cmd.Id into cmdGroup
                                      from cmd in cmdGroup.DefaultIfEmpty()
@@ -129,7 +155,11 @@ namespace A1.Api.Controllers
                 return NotFound();
             }
 
-            return Ok(revenueRate);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                new[] { revenueRate.Id },
+                "RevenueRates", "RevenueRate");
+            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(revenueRate, attachedIds.Contains(revenueRate.Id)));
         }
 
         [HttpPost]

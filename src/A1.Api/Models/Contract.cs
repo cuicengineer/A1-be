@@ -25,12 +25,16 @@ namespace A1.Api.Models
         public int? SDRateMonths { get; set; }
         public decimal? SecurityDepositAmount { get; set; }
         public decimal? RentalValue { get; set; }
-        public string GovtShareCondition { get; set; } = string.Empty;
+        public decimal? GovtShare { get; set; }
         public string? Term { get; set; } = string.Empty;
         public string? RiseTermType { get; set; }
         public DateTime? RiseDate { get; set; }
         public int? RiseYear { get; set; }
         public decimal? PAFShare { get; set; }
+        public decimal? GroupArea { get; set; }
+        public decimal? GroupRate { get; set; }
+        public decimal? RentalValueRate { get; set; }
+        public decimal? VaArea { get; set; }
         public bool Status { get; set; }
         public string? userIPAddress { get; set; }
         public string? Remarks { get; set; }

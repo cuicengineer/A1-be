@@ -21,7 +21,8 @@ namespace A1.Api.Utilities
                 new Claim("rank", user.Rank ?? string.Empty),
                 new Claim("cmdId", user.CmdId?.ToString() ?? string.Empty),
                 new Claim("baseId", user.BaseId?.ToString() ?? string.Empty),
-                new Claim("unitId", user.UnitId?.ToString() ?? string.Empty)
+                new Claim("unitId", user.UnitId?.ToString() ?? string.Empty),
+                new Claim("levelId", user.LevelId?.ToString() ?? string.Empty)
             };
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.Key));

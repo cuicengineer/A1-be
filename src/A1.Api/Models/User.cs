@@ -32,6 +32,7 @@ namespace A1.Api.Models
         public int? UnitId { get; set; }
         public int? BaseId { get; set; }
         public int? CmdId { get; set; }
+        public int? LevelId { get; set; }
         public byte? Status { get; set; }
     }
 }

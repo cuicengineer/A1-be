@@ -40,6 +40,7 @@ namespace A1.Api.Controllers
             public int? UnitId { get; set; }
             public int? BaseId { get; set; }
             public int? CmdId { get; set; }
+            public int? LevelId { get; set; }
             public byte? Status { get; set; }
             public string AccessToken { get; set; } = string.Empty;
         }
@@ -108,6 +109,7 @@ namespace A1.Api.Controllers
                 UnitId = user.UnitId,
                 BaseId = user.BaseId,
                 CmdId = user.CmdId,
+                LevelId = user.LevelId,
                 Status = user.Status,
                 AccessToken = accessToken
             };

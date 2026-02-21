@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -37,6 +38,8 @@ namespace A1.Api.Controllers
             var baseQuery = _context.RentalValueGovtShareRates
                 .AsNoTracking()
                 .Where(r => (r.IsDeleted == null || r.IsDeleted == false) && (r.Status == true));
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
 
             // Filter by type if provided
             if (type.HasValue)
@@ -55,18 +58,30 @@ namespace A1.Api.Controllers
                 .Take(pageSize)
                 .ToListAsync();
 
-            return Ok(items);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                items.Select(x => x.Id),
+                "RentalValueGovtShareRates", "RentalValueGovtShareRate");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(items, x => x.Id, attachedIds);
+            return Ok(response);
         }
 
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var item = await _context.RentalValueGovtShareRates
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            var baseQuery = _context.RentalValueGovtShareRates
                 .AsNoTracking()
-                .FirstOrDefaultAsync(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false));
+                .Where(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false));
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
+            var item = await baseQuery.FirstOrDefaultAsync();
 
             if (item == null) return NotFound();
-            return Ok(item);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                new[] { item.Id },
+                "RentalValueGovtShareRates", "RentalValueGovtShareRate");
+            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(item, attachedIds.Contains(item.Id)));
         }
 
         [HttpPost]

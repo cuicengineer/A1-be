@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -47,6 +48,8 @@ namespace A1.Api.Controllers
             var baseQuery = _context.Contracts
                 .AsNoTracking()
                 .Where(c => c.IsDeleted == null || c.IsDeleted == false);
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
 
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
@@ -97,8 +100,12 @@ namespace A1.Api.Controllers
                                        c.SDRateMonths,
                                        c.SecurityDepositAmount,
                                        c.RentalValue,
-                                       c.GovtShareCondition,
+                                       c.GovtShare,
                                        c.PAFShare,
+                                       c.GroupArea,
+                                       c.GroupRate,
+                                       c.RentalValueRate,
+                                       c.VaArea,
                                        c.Status,
                                        c.Term,
                                        c.ActionDate,
@@ -117,7 +124,12 @@ namespace A1.Api.Controllers
                 .Take(pageSize)
                 .ToListAsync();
 
-            return Ok(contracts);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                contracts.Select(x => x.Id),
+                "Contracts", "Contract");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(contracts, x => x.Id, attachedIds);
+            return Ok(response);
         }
 
         /// <summary>
@@ -127,9 +139,13 @@ namespace A1.Api.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var contract = await (from c in _context.Contracts
-                                  .AsNoTracking()
-                                  .Where(c => c.Id == id && (c.IsDeleted == null || c.IsDeleted == false))
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            var baseQuery = _context.Contracts
+                .AsNoTracking()
+                .Where(c => c.Id == id && (c.IsDeleted == null || c.IsDeleted == false));
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
+
+            var contract = await (from c in baseQuery
                                    join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
                                        on c.CmdId equals cmd.Id into cmdGroup
                                    from cmd in cmdGroup.DefaultIfEmpty()
@@ -171,8 +187,12 @@ namespace A1.Api.Controllers
                                        c.SDRateMonths,
                                        c.SecurityDepositAmount,
                                        c.RentalValue,
-                                       c.GovtShareCondition,
+                                       c.GovtShare,
                                        c.PAFShare,
+                                       c.GroupArea,
+                                       c.GroupRate,
+                                       c.RentalValueRate,
+                                       c.VaArea,
                                        c.Status,
                                        c.Term,
                                        c.ActionDate,
@@ -194,7 +214,11 @@ namespace A1.Api.Controllers
                 return NotFound();
             }
 
-            return Ok(contract);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                new[] { contract.Id },
+                "Contracts", "Contract");
+            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(contract, attachedIds.Contains(contract.Id)));
         }
 
         /// <summary>
@@ -293,8 +317,12 @@ namespace A1.Api.Controllers
                                        c.SDRateMonths,
                                        c.SecurityDepositAmount,
                                        c.RentalValue,
-                                       c.GovtShareCondition,
+                                       c.GovtShare,
                                        c.PAFShare,
+                                       c.GroupArea,
+                                       c.GroupRate,
+                                       c.RentalValueRate,
+                                       c.VaArea,
                                        c.Status,
                                        c.Term,
                                        c.ActionDate,
@@ -363,8 +391,12 @@ namespace A1.Api.Controllers
             existingContract.SDRateMonths = contract.SDRateMonths;
             existingContract.SecurityDepositAmount = contract.SecurityDepositAmount;
             existingContract.RentalValue = contract.RentalValue;
-            existingContract.GovtShareCondition = contract.GovtShareCondition;
+            existingContract.GovtShare = contract.GovtShare;
             existingContract.PAFShare = contract.PAFShare;
+            existingContract.GroupArea = contract.GroupArea;
+            existingContract.GroupRate = contract.GroupRate;
+            existingContract.RentalValueRate = contract.RentalValueRate;
+            existingContract.VaArea = contract.VaArea;
             existingContract.Status = contract.Status;
             existingContract.Term = contract.Term;
             existingContract.ActionDate = DateTime.UtcNow;

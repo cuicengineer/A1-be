@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -66,6 +67,8 @@ namespace A1.Api.Controllers
             var baseQuery = _context.SharingFormulas
                 .AsNoTracking()
                 .Where(sf => sf.IsDeleted == null || sf.IsDeleted == false);
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
 
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
@@ -110,7 +113,12 @@ namespace A1.Api.Controllers
                                        .Take(pageSize)
                                        .ToListAsync();
 
-            return Ok(sharingFormulas);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                sharingFormulas.Select(x => x.Id),
+                "SharingFormula", "SharingFormulas");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(sharingFormulas, x => x.Id, attachedIds);
+            return Ok(response);
         }
 
         /// <summary>
@@ -120,9 +128,13 @@ namespace A1.Api.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var sharingFormula = await (from sf in _context.SharingFormulas
-                                      .AsNoTracking()
-                                      .Where(sf => sf.Id == id && (sf.IsDeleted == null || sf.IsDeleted == false))
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            var baseQuery = _context.SharingFormulas
+                .AsNoTracking()
+                .Where(sf => sf.Id == id && (sf.IsDeleted == null || sf.IsDeleted == false));
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
+
+            var sharingFormula = await (from sf in baseQuery
                                       join cmd in _context.Commands.Where(c => c.IsDeleted == null || c.IsDeleted == false)
                                           on sf.CmdId equals cmd.Id into cmdGroup
                                       from cmd in cmdGroup.DefaultIfEmpty()
@@ -157,7 +169,11 @@ namespace A1.Api.Controllers
                                       .FirstOrDefaultAsync();
 
             if (sharingFormula == null) return NotFound();
-            return Ok(sharingFormula);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                new[] { sharingFormula.Id },
+                "SharingFormula", "SharingFormulas");
+            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(sharingFormula, attachedIds.Contains(sharingFormula.Id)));
         }
 
         /// <summary>

@@ -1,8 +1,10 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
+using System.Linq.Expressions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
@@ -86,19 +88,31 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // Generic Minimal API Endpoints
-app.MapGet("/api/{entityName}", async (string entityName, IServiceProvider sp) =>
+app.MapGet("/api/{entityName}", async (string entityName, HttpContext httpContext, IServiceProvider sp) =>
 {
-    var repo = GetRepository(sp, entityName);
-    if (repo == null) return Results.NotFound();
-    var result = await ((dynamic)repo).GetAllAsync();
+    var entityType = GetEntityType(entityName);
+    if (entityType == null) return Results.NotFound();
+
+    var db = sp.GetRequiredService<ApplicationDbContext>();
+    IQueryable query = GetEntityQueryable(db, entityType);
+    var scope = await DataAccessScopeHelper.ResolveAsync(httpContext.User, db);
+    query = DataAccessScopeHelper.ApplyScope(query, entityType, scope);
+
+    var result = await query.Cast<object>().ToListAsync();
     return Results.Ok(result);
 }).RequireAuthorization().RequireCors("AllowFrontend");
 
-app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, IServiceProvider sp) =>
+app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, HttpContext httpContext, IServiceProvider sp) =>
 {
-    var repo = GetRepository(sp, entityName);
-    if (repo == null) return Results.NotFound();
-    var entity = await ((dynamic)repo).GetByIdAsync(id);
+    var entityType = GetEntityType(entityName);
+    if (entityType == null) return Results.NotFound();
+
+    var db = sp.GetRequiredService<ApplicationDbContext>();
+    IQueryable query = GetEntityQueryable(db, entityType);
+    var scope = await DataAccessScopeHelper.ResolveAsync(httpContext.User, db);
+    query = DataAccessScopeHelper.ApplyScope(query, entityType, scope);
+    query = ApplyIdFilter(query, entityType, id);
+    var entity = await query.Cast<object>().FirstOrDefaultAsync();
     return entity != null ? Results.Ok(entity) : Results.NotFound();
 }).RequireAuthorization().RequireCors("AllowFrontend");
 
@@ -204,6 +218,36 @@ bool IsDefault(object? value, Type type)
     if (value == null) return true;
     var defaultVal = t.IsValueType ? Activator.CreateInstance(t) : null;
     return Equals(value, defaultVal);
+}
+
+IQueryable ApplyIdFilter(IQueryable source, Type entityType, int id)
+{
+    var pk = GetPrimaryKey(entityType);
+    var parameter = Expression.Parameter(entityType, "e");
+    var property = Expression.Property(parameter, pk);
+    var targetType = Nullable.GetUnderlyingType(pk.PropertyType) ?? pk.PropertyType;
+    var value = Expression.Constant(Convert.ChangeType(id, targetType), targetType);
+    Expression comparison = pk.PropertyType == targetType
+        ? Expression.Equal(property, value)
+        : Expression.Equal(property, Expression.Convert(value, pk.PropertyType));
+    var lambda = Expression.Lambda(comparison, parameter);
+
+    var whereMethod = typeof(Queryable)
+        .GetMethods()
+        .First(m => m.Name == nameof(Queryable.Where) && m.GetParameters().Length == 2)
+        .MakeGenericMethod(entityType);
+
+    return (IQueryable)whereMethod.Invoke(null, new object[] { source, lambda })!;
+}
+
+IQueryable GetEntityQueryable(ApplicationDbContext context, Type entityType)
+{
+    var setMethod = typeof(DbContext)
+        .GetMethods()
+        .First(m => m.Name == nameof(DbContext.Set) && m.IsGenericMethod && m.GetParameters().Length == 0)
+        .MakeGenericMethod(entityType);
+
+    return (IQueryable)setMethod.Invoke(context, null)!;
 }
 
 app.MapControllers();

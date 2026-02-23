@@ -119,21 +119,45 @@ namespace A1.Api.Controllers
             existing.Status = item.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
+            existing.ActionBy = item.ActionBy;
 
             await _repository.UpdateAsync(existing);
             return NoContent();
         }
 
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        public async Task<IActionResult> Delete(int id, [FromBody] RentalValueGovtShareRateDeleteRequest? request = null)
         {
             var existing = await _context.RentalValueGovtShareRates
                 .FirstOrDefaultAsync(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false));
             if (existing == null) return NotFound();
 
-            await _repository.DeleteAsync(existing);
+            var actionBy = request?.ActionBy;
+            if (string.IsNullOrWhiteSpace(actionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.RentalValueGovtShareRates
+                    .AsNoTracking()
+                    .Where(r => r.Id == id)
+                    .Select(r => r.ActionBy)
+                    .FirstOrDefaultAsync();
+                actionBy = existingActionBy;
+            }
+
+            existing.IsDeleted = true;
+            existing.Action = "DELETE";
+            existing.ActionDate = DateTime.UtcNow;
+            existing.ActionBy = actionBy;
+
+            _context.RentalValueGovtShareRates.Update(existing);
+            await _context.SaveChangesAsync();
             return NoContent();
         }
+    }
+
+    public class RentalValueGovtShareRateDeleteRequest
+    {
+        public string? ActionBy { get; set; }
     }
 }
 

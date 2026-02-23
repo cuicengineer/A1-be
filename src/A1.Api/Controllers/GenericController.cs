@@ -27,11 +27,34 @@ namespace A1.Api.Controllers
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
-            // Always fetch via EF Core, then bind additional ids if the entity exposes them
-            var entities = await _repository.GetAllAsync();
-            var filteredEntities = FilterNotDeleted(entities).ToList();
+            // Use IQueryable for memory-efficient database-level filtering
+            var baseQuery = _context.Set<T>()
+                .AsNoTracking();
+
+            // Filter IsDeleted at database level - build expression that EF Core can translate
+            var isDeletedProp = typeof(T).GetProperty("IsDeleted", BindingFlags.Public | BindingFlags.Instance);
+            if (isDeletedProp != null)
+            {
+                var parameter = Expression.Parameter(typeof(T), "e");
+                var property = Expression.Property(parameter, isDeletedProp);
+                var nullConstant = Expression.Constant(null);
+                var falseConstant = Expression.Constant(false);
+                
+                // Build: e.IsDeleted == null || e.IsDeleted == false
+                var isNull = Expression.Equal(property, nullConstant);
+                var isFalse = Expression.Equal(property, falseConstant);
+                var orExpression = Expression.OrElse(isNull, isFalse);
+                var lambda = Expression.Lambda<Func<T, bool>>(orExpression, parameter);
+                
+                baseQuery = baseQuery.Where(lambda);
+            }
+
+            // Apply scope-based filtering at database level
             var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
-            filteredEntities = FilterByScope(filteredEntities, scope).ToList();
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
+
+            // Execute query and get entities
+            var filteredEntities = await baseQuery.ToListAsync();
 
             var entityType = filteredEntities.FirstOrDefault()?.GetType() ?? typeof(T);
             var hasCmdId = HasProperty(entityType, "cmdId");
@@ -135,17 +158,41 @@ namespace A1.Api.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var entity = await _repository.GetByIdAsync(id);
-            if (entity == null)
+            // Use IQueryable for memory-efficient database-level filtering
+            var baseQuery = _context.Set<T>()
+                .AsNoTracking();
+
+            // Get primary key property for ID filtering
+            var pkProp = GetPrimaryKey(typeof(T));
+            var parameter = Expression.Parameter(typeof(T), "e");
+            var property = Expression.Property(parameter, pkProp);
+            var idConstant = Expression.Constant(id);
+            var idExpression = Expression.Equal(property, idConstant);
+            var idLambda = Expression.Lambda<Func<T, bool>>(idExpression, parameter);
+            baseQuery = baseQuery.Where(idLambda);
+
+            // Filter IsDeleted at database level
+            var isDeletedProp = typeof(T).GetProperty("IsDeleted", BindingFlags.Public | BindingFlags.Instance);
+            if (isDeletedProp != null)
             {
-                return NotFound();
+                var isDeletedParam = Expression.Parameter(typeof(T), "e");
+                var isDeletedProperty = Expression.Property(isDeletedParam, isDeletedProp);
+                var nullConstant = Expression.Constant(null);
+                var falseConstant = Expression.Constant(false);
+                var isNull = Expression.Equal(isDeletedProperty, nullConstant);
+                var isFalse = Expression.Equal(isDeletedProperty, falseConstant);
+                var orExpression = Expression.OrElse(isNull, isFalse);
+                var isDeletedLambda = Expression.Lambda<Func<T, bool>>(orExpression, isDeletedParam);
+                baseQuery = baseQuery.Where(isDeletedLambda);
             }
-            if (IsEntityDeleted(entity))
-            {
-                return NotFound();
-            }
+
+            // Apply scope-based filtering at database level
             var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
-            if (!CanAccessEntity(entity, scope))
+            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
+
+            // Execute query
+            var entity = await baseQuery.FirstOrDefaultAsync();
+            if (entity == null)
             {
                 return NotFound();
             }

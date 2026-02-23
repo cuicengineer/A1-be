@@ -77,6 +77,7 @@ namespace A1.Api.Controllers
             bankList.IsDeleted = false;
             bankList.ActionDate = DateTime.UtcNow;
             bankList.Action = "CREATE";
+            // ActionBy comes from payload
 
             await _repository.AddAsync(bankList);
             return CreatedAtAction(nameof(GetById), new { id = bankList.Id }, bankList);
@@ -119,6 +120,7 @@ namespace A1.Api.Controllers
             existingBankList.Status = bankList.Status;
             existingBankList.ActionDate = DateTime.UtcNow;
             existingBankList.Action = "UPDATE";
+            existingBankList.ActionBy = bankList.ActionBy;
 
             await _repository.UpdateAsync(existingBankList);
             return NoContent();
@@ -142,6 +144,17 @@ namespace A1.Api.Controllers
             bankList.IsDeleted = true;
             bankList.Action = "DELETE";
             bankList.ActionDate = DateTime.UtcNow;
+            // ActionBy should come from payload if provided, otherwise keep existing value
+            if (string.IsNullOrWhiteSpace(bankList.ActionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.BankLists
+                    .AsNoTracking()
+                    .Where(b => b.Id == id)
+                    .Select(b => b.ActionBy)
+                    .FirstOrDefaultAsync();
+                bankList.ActionBy = existingActionBy;
+            }
 
             _context.BankLists.Update(bankList);
             await _context.SaveChangesAsync();

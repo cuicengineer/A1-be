@@ -417,9 +417,6 @@ namespace A1.Api.Controllers
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // Get current user for ActionBy
-                var currentUser = GetCurrentUser();
-
                 // Create PropertyGroup entity from request
                 var propertyGroup = new PropertyGroup
                 {
@@ -434,7 +431,7 @@ namespace A1.Api.Controllers
                     Remarks = request.Remarks,
                     Status = request.Status,
                     IsDeleted = false,
-                    ActionBy = currentUser
+                    ActionBy = request.ActionBy
                 };
 
                 // Save PropertyGroup first
@@ -492,7 +489,7 @@ namespace A1.Api.Controllers
                             IsDeleted = false,
                             ActionDate = now,
                             Action = "CREATE",
-                            ActionBy = currentUser
+                            ActionBy = request.ActionBy
                         });
 
                         totalArea += propArea;
@@ -508,6 +505,7 @@ namespace A1.Api.Controllers
                         // Update PropertyGroup with calculated totals
                         propertyGroup.Area = totalArea;
                         propertyGroup.Rate = totalRate;
+                        propertyGroup.ActionBy = request.ActionBy;
                         await _context.SaveChangesAsync();
                     }
                 }
@@ -570,7 +568,6 @@ namespace A1.Api.Controllers
 
             var propertyArea = property.Area ?? 0;
 
-            var currentUser = GetCurrentUser();
             var now = DateTime.UtcNow;
 
             // Set individual property area in linking record
@@ -579,7 +576,7 @@ namespace A1.Api.Controllers
             request.IsDeleted = false;
             request.ActionDate = now;
             request.Action = "CREATE";
-            request.ActionBy = currentUser;
+            // ActionBy comes from payload
 
             await _context.PropertyGroupLinkings.AddAsync(request);
             await _context.SaveChangesAsync();
@@ -594,7 +591,7 @@ namespace A1.Api.Controllers
                 propertyGroup.Rate = (propertyGroup.Rate ?? 0) + propertyRate;
                 propertyGroup.ActionDate = DateTime.UtcNow;
                 propertyGroup.Action = "UPDATE";
-                propertyGroup.ActionBy = currentUser;
+                propertyGroup.ActionBy = request.ActionBy;
                 _context.PropertyGroups.Update(propertyGroup);
                 await _context.SaveChangesAsync();
             }
@@ -632,9 +629,6 @@ namespace A1.Api.Controllers
                 return NotFound("PropertyGroup not found.");
             }
 
-            // Get current user for ActionBy
-            var currentUser = GetCurrentUser();
-
             // Update properties efficiently
             existingPropertyGroup.CmdId = propertyGroup.CmdId;
             existingPropertyGroup.BaseId = propertyGroup.BaseId;
@@ -648,7 +642,7 @@ namespace A1.Api.Controllers
             existingPropertyGroup.Status = propertyGroup.Status;
             existingPropertyGroup.ActionDate = DateTime.UtcNow;
             existingPropertyGroup.Action = "UPDATE";
-            existingPropertyGroup.ActionBy = currentUser;
+            existingPropertyGroup.ActionBy = propertyGroup.ActionBy;
 
             await _repository.UpdateAsync(existingPropertyGroup);
             return NoContent();
@@ -658,7 +652,7 @@ namespace A1.Api.Controllers
         /// DELETE: Soft delete a property group (sets IsDeleted = true)
         /// </summary>
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        public async Task<IActionResult> Delete(int id, [FromBody] PropertyGroupDeleteRequest? request = null)
         {
             var propertyGroup = await _context.PropertyGroups
                 .FirstOrDefaultAsync(pg => pg.Id == id && (pg.IsDeleted == null || pg.IsDeleted == false));
@@ -668,15 +662,24 @@ namespace A1.Api.Controllers
                 return NotFound("PropertyGroup not found.");
             }
 
-            // Get current user for ActionBy
-            var currentUser = GetCurrentUser();
+            var actionBy = request?.ActionBy;
+            if (string.IsNullOrWhiteSpace(actionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.PropertyGroups
+                    .AsNoTracking()
+                    .Where(pg => pg.Id == id)
+                    .Select(pg => pg.ActionBy)
+                    .FirstOrDefaultAsync();
+                actionBy = existingActionBy;
+            }
 
             // Soft delete group - set Status = false and IsDeleted = true
             propertyGroup.Status = false;
             propertyGroup.IsDeleted = true;
             propertyGroup.Action = "DELETE";
             propertyGroup.ActionDate = DateTime.UtcNow;
-            propertyGroup.ActionBy = currentUser;
+            propertyGroup.ActionBy = actionBy;
 
             // Also deactivate and soft delete related active linkings
             var activeLinkings = await _context.PropertyGroupLinkings
@@ -691,7 +694,7 @@ namespace A1.Api.Controllers
                     linking.IsDeleted = true;
                     linking.Action = "DELETE";
                     linking.ActionDate = DateTime.UtcNow;
-                    linking.ActionBy = currentUser;
+                    linking.ActionBy = actionBy;
                 }
 
                 _context.PropertyGroupLinkings.UpdateRange(activeLinkings);
@@ -709,7 +712,7 @@ namespace A1.Api.Controllers
         /// DELETE /api/PropertyGroup/Linking/{id} - Delete a property group linking
         /// </summary>
         [HttpDelete("Linking/{id}")]
-        public async Task<IActionResult> DeleteLinking(int id)
+        public async Task<IActionResult> DeleteLinking(int id, [FromBody] PropertyGroupLinkingDeleteRequest? request = null)
         {
             if (id <= 0)
             {
@@ -724,8 +727,17 @@ namespace A1.Api.Controllers
                 return NotFound("PropertyGroupLinking not found.");
             }
 
-            // Get current user for ActionBy
-            var currentUser = GetCurrentUser();
+            var actionBy = request?.ActionBy;
+            if (string.IsNullOrWhiteSpace(actionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.PropertyGroupLinkings
+                    .AsNoTracking()
+                    .Where(l => l.Id == id)
+                    .Select(l => l.ActionBy)
+                    .FirstOrDefaultAsync();
+                actionBy = existingActionBy;
+            }
 
             // Get the property's area from linking record (individual property area)
             var propertyArea = linking.Area ?? 0;
@@ -758,7 +770,7 @@ namespace A1.Api.Controllers
 
                 propertyGroup.ActionDate = DateTime.UtcNow;
                 propertyGroup.Action = "UPDATE";
-                propertyGroup.ActionBy = currentUser;
+                propertyGroup.ActionBy = actionBy;
                 _context.PropertyGroups.Update(propertyGroup);
             }
 
@@ -767,7 +779,7 @@ namespace A1.Api.Controllers
             linking.Status = false;
             linking.Action = "DELETE";
             linking.ActionDate = DateTime.UtcNow;
-            linking.ActionBy = currentUser;
+            linking.ActionBy = actionBy;
 
             _context.PropertyGroupLinkings.Update(linking);
             await _context.SaveChangesAsync();
@@ -784,6 +796,22 @@ namespace A1.Api.Controllers
     {
         // PropertyGroupLinkings as array of PropIds (integers)
         public List<int>? PropertyGroupLinkings { get; set; }
+    }
+
+    /// <summary>
+    /// Request DTO for deleting PropertyGroup
+    /// </summary>
+    public class PropertyGroupDeleteRequest
+    {
+        public string? ActionBy { get; set; }
+    }
+
+    /// <summary>
+    /// Request DTO for deleting PropertyGroupLinking
+    /// </summary>
+    public class PropertyGroupLinkingDeleteRequest
+    {
+        public string? ActionBy { get; set; }
     }
 }
 

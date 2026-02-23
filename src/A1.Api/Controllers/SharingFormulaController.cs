@@ -190,7 +190,6 @@ namespace A1.Api.Controllers
                 return BadRequest("Data is required.");
             }
 
-            var currentUser = GetCurrentUser();
             var now = DateTime.UtcNow;
 
             try
@@ -215,7 +214,7 @@ namespace A1.Api.Controllers
                         item.IsDeleted = false;
                         item.ActionDate = now;
                         item.Action = "CREATE";
-                        item.ActionBy = currentUser;
+                        // ActionBy comes from payload
                     }
 
                     // Batch insert for memory efficiency
@@ -245,7 +244,7 @@ namespace A1.Api.Controllers
                     item.IsDeleted = false;
                     item.ActionDate = now;
                     item.Action = "CREATE";
-                    item.ActionBy = currentUser;
+                    // ActionBy comes from payload
 
                     await _repository.AddAsync(item);
                     return CreatedAtAction(nameof(GetById), new { id = item.Id }, item);
@@ -278,8 +277,6 @@ namespace A1.Api.Controllers
                 .FirstOrDefaultAsync(sf => sf.Id == id && (sf.IsDeleted == null || sf.IsDeleted == false));
             if (existing == null) return NotFound();
 
-            var currentUser = GetCurrentUser();
-
             existing.ClassId = item.ClassId;
             existing.Type = item.Type;
             existing.CmdId = item.CmdId;
@@ -293,7 +290,7 @@ namespace A1.Api.Controllers
             existing.Status = item.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
-            existing.ActionBy = currentUser;
+            existing.ActionBy = item.ActionBy;
 
             await _repository.UpdateAsync(existing);
             return NoContent();
@@ -309,12 +306,21 @@ namespace A1.Api.Controllers
                 .FirstOrDefaultAsync(sf => sf.Id == id && (sf.IsDeleted == null || sf.IsDeleted == false));
             if (existing == null) return NotFound();
 
-            var currentUser = GetCurrentUser();
+            // ActionBy should come from payload if provided, otherwise keep existing value
+            if (string.IsNullOrWhiteSpace(existing.ActionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.SharingFormulas
+                    .AsNoTracking()
+                    .Where(sf => sf.Id == id)
+                    .Select(sf => sf.ActionBy)
+                    .FirstOrDefaultAsync();
+                existing.ActionBy = existingActionBy;
+            }
 
             existing.IsDeleted = true;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "DELETE";
-            existing.ActionBy = currentUser;
 
             await _repository.UpdateAsync(existing);
             return NoContent();

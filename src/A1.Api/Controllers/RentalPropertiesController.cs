@@ -186,12 +186,13 @@ namespace A1.Api.Controllers
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.PropertyType = rentalProperty.PropertyType;
+            existing.ActionBy = rentalProperty.ActionBy;
             await _repository.UpdateAsync(existing);
             return NoContent();
         }
 
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        public async Task<IActionResult> Delete(int id, [FromBody] RentalPropertyDeleteRequest? request = null)
         {
             var rental = await _context.RentalProperties
                 .FirstOrDefaultAsync(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false));
@@ -201,15 +202,33 @@ namespace A1.Api.Controllers
                 return NotFound("Rental property not found.");
             }
 
+            var actionBy = request?.ActionBy;
+            if (string.IsNullOrWhiteSpace(actionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.RentalProperties
+                    .AsNoTracking()
+                    .Where(r => r.Id == id)
+                    .Select(r => r.ActionBy)
+                    .FirstOrDefaultAsync();
+                actionBy = existingActionBy;
+            }
+
             rental.IsDeleted = true;
             rental.Action = "DELETE";
             rental.ActionDate = DateTime.UtcNow;
+            rental.ActionBy = actionBy;
 
             _context.RentalProperties.Update(rental);
             await _context.SaveChangesAsync();
 
             return NoContent();
         }
+    }
+
+    public class RentalPropertyDeleteRequest
+    {
+        public string? ActionBy { get; set; }
     }
 }
 

@@ -401,6 +401,7 @@ namespace A1.Api.Controllers
             existingContract.Term = contract.Term;
             existingContract.ActionDate = DateTime.UtcNow;
             existingContract.Action = "UPDATE";
+            existingContract.ActionBy = contract.ActionBy;
             existingContract.userIPAddress = contract.userIPAddress;
             existingContract.Remarks = contract.Remarks;
 
@@ -422,7 +423,7 @@ namespace A1.Api.Controllers
                         existingTerm.Status = term.Status;
                         existingTerm.ActionDate = now;
                         existingTerm.Action = "UPDATE";
-                        existingTerm.ActionBy = existingContract.ActionBy;
+                        existingTerm.ActionBy = contract.ActionBy;
                         _context.ContractRiseTerms.Update(existingTerm);
                     }
                     else
@@ -437,7 +438,7 @@ namespace A1.Api.Controllers
                             IsDeleted = false,
                             ActionDate = now,
                             Action = "CREATE",
-                            ActionBy = existingContract.ActionBy
+                            ActionBy = contract.ActionBy
                         };
                         await _context.ContractRiseTerms.AddAsync(newTerm);
                     }

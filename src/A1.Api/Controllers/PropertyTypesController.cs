@@ -77,6 +77,7 @@ namespace A1.Api.Controllers
             propertyType.IsDeleted = false;
             propertyType.ActionDate = DateTime.UtcNow;
             propertyType.Action = "CREATE";
+            // ActionBy comes from payload
 
             await _repository.AddAsync(propertyType);
             return CreatedAtAction(nameof(GetById), new { id = propertyType.Id }, propertyType);
@@ -117,6 +118,7 @@ namespace A1.Api.Controllers
             existingPropertyType.Status = propertyType.Status;
             existingPropertyType.ActionDate = DateTime.UtcNow;
             existingPropertyType.Action = "UPDATE";
+            existingPropertyType.ActionBy = propertyType.ActionBy;
 
             await _repository.UpdateAsync(existingPropertyType);
             return NoContent();
@@ -140,6 +142,17 @@ namespace A1.Api.Controllers
             propertyType.IsDeleted = true;
             propertyType.Action = "DELETE";
             propertyType.ActionDate = DateTime.UtcNow;
+            // ActionBy should come from payload if provided, otherwise keep existing value
+            if (string.IsNullOrWhiteSpace(propertyType.ActionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.PropertyTypes
+                    .AsNoTracking()
+                    .Where(pt => pt.Id == id)
+                    .Select(pt => pt.ActionBy)
+                    .FirstOrDefaultAsync();
+                propertyType.ActionBy = existingActionBy;
+            }
 
             _context.PropertyTypes.Update(propertyType);
             await _context.SaveChangesAsync();

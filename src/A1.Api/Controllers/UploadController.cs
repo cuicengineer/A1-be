@@ -91,7 +91,7 @@ namespace A1.Api.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> UploadFiles([FromForm] int id, [FromForm] string tableName, [FromForm] IFormFileCollection files)
+        public async Task<IActionResult> UploadFiles([FromForm] int id, [FromForm] string tableName, [FromForm] IFormFileCollection files, [FromForm] string? actionBy = null)
         {
             if (files == null || files.Count == 0)
             {
@@ -147,6 +147,7 @@ namespace A1.Api.Controllers
                         UploadedDate = DateTime.UtcNow,
                         ActionDate = DateTime.UtcNow,
                         Action = "CREATE",
+                        ActionBy = actionBy,
                         IsDeleted = false
                     };
 
@@ -388,7 +389,7 @@ namespace A1.Api.Controllers
         /// DELETE method to soft delete a file by setting IsDeleted flag to true
         /// </summary>
         [HttpDelete("{fileId}")]
-        public async Task<IActionResult> DeleteFile(int fileId)
+        public async Task<IActionResult> DeleteFile(int fileId, [FromBody] FileUploadDeleteRequest? request = null)
         {
             if (fileId <= 0)
             {
@@ -405,10 +406,23 @@ namespace A1.Api.Controllers
                     return NotFound("File not found.");
                 }
 
+                var actionBy = request?.ActionBy;
+                if (string.IsNullOrWhiteSpace(actionBy))
+                {
+                    // If payload doesn't have ActionBy, preserve existing value
+                    var existingActionBy = await _context.FileUploads
+                        .AsNoTracking()
+                        .Where(f => f.Id == fileId)
+                        .Select(f => f.ActionBy)
+                        .FirstOrDefaultAsync();
+                    actionBy = existingActionBy;
+                }
+
                 // Soft delete - set IsDeleted flag
                 fileUpload.IsDeleted = true;
                 fileUpload.Action = "DELETE";
                 fileUpload.ActionDate = DateTime.UtcNow;
+                fileUpload.ActionBy = actionBy;
 
                 _context.FileUploads.Update(fileUpload);
                 await _context.SaveChangesAsync();
@@ -453,6 +467,11 @@ namespace A1.Api.Controllers
             }
             return $"{len:0.##} {sizes[order]}";
         }
+    }
+
+    public class FileUploadDeleteRequest
+    {
+        public string? ActionBy { get; set; }
     }
 }
 

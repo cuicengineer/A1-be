@@ -207,13 +207,14 @@ namespace A1.Api.Controllers
             existing.Status = revenueRate.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
+            existing.ActionBy = revenueRate.ActionBy;
 
             await _repository.UpdateAsync(existing);
             return NoContent();
         }
 
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
+        public async Task<IActionResult> Delete(int id, [FromBody] RevenueRateDeleteRequest? request = null)
         {
             var revenueRate = await _context.RevenueRates
                 .FirstOrDefaultAsync(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false));
@@ -223,15 +224,33 @@ namespace A1.Api.Controllers
                 return NotFound("Revenue rate not found.");
             }
 
+            var actionBy = request?.ActionBy;
+            if (string.IsNullOrWhiteSpace(actionBy))
+            {
+                // If payload doesn't have ActionBy, preserve existing value
+                var existingActionBy = await _context.RevenueRates
+                    .AsNoTracking()
+                    .Where(r => r.Id == id)
+                    .Select(r => r.ActionBy)
+                    .FirstOrDefaultAsync();
+                actionBy = existingActionBy;
+            }
+
             revenueRate.IsDeleted = true;
             revenueRate.Action = "DELETE";
             revenueRate.ActionDate = DateTime.UtcNow;
+            revenueRate.ActionBy = actionBy;
 
             _context.RevenueRates.Update(revenueRate);
             await _context.SaveChangesAsync();
 
             return NoContent();
         }
+    }
+
+    public class RevenueRateDeleteRequest
+    {
+        public string? ActionBy { get; set; }
     }
 }
 

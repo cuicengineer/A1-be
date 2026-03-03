@@ -1,9 +1,12 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
+using System.Security.Claims;
+using System.Text.Json;
 
 namespace A1.Api.Controllers
 {
@@ -13,11 +16,22 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<RevenueRate> _repository;
         private readonly ApplicationDbContext _context;
+        private readonly IAuditLogService _auditLogService;
 
-        public RevenueRatesController(IGenericRepository<RevenueRate> repository, ApplicationDbContext context)
+        public RevenueRatesController(IGenericRepository<RevenueRate> repository, ApplicationDbContext context, IAuditLogService auditLogService)
         {
             _repository = repository;
             _context = context;
+            _auditLogService = auditLogService;
+        }
+
+        private static string GetActionBy(ClaimsPrincipal? user)
+        {
+            var name = user?.Identity?.Name;
+            if (!string.IsNullOrEmpty(name)) return name;
+            var claim = user?.FindFirst(ClaimTypes.Name) ?? user?.FindFirst(ClaimTypes.NameIdentifier);
+            if (claim != null && !string.IsNullOrEmpty(claim.Value)) return claim.Value;
+            return "System";
         }
 
         [HttpGet]
@@ -64,9 +78,9 @@ namespace A1.Api.Controllers
                                  {
                                      Id = r.Id,
                                      PropertyId = r.PropertyId,
-                                     CmdId = p != null ? p.CmdId : (int?)null,
+                                     CmdId = r.CmdId ?? (p != null ? p.CmdId : (int?)null),
                                      CmdName = cmd != null ? cmd.Name : string.Empty,
-                                     BaseId = p != null ? p.BaseId : (int?)null,
+                                     BaseId = r.BaseId ?? (p != null ? p.BaseId : (int?)null),
                                      BaseName = b != null ? b.Name : string.Empty,
                                      ClassId = p != null ? p.ClassId : (int?)null,
                                      ClassName = cls != null ? cls.Name : string.Empty,
@@ -76,6 +90,7 @@ namespace A1.Api.Controllers
                                      Location = p != null ? p.Location : null,
                                      Remarks = p != null ? p.Remarks : null,
                                      ApplicableDate = r.ApplicableDate,
+                                     DeactiveDate = r.DeactiveDate,
                                      Rate = r.Rate,
                                      Attachments = r.Attachments,
                                      Status = r.Status,
@@ -128,9 +143,9 @@ namespace A1.Api.Controllers
                                     {
                                         Id = r.Id,
                                         PropertyId = r.PropertyId,
-                                        CmdId = p != null ? p.CmdId : (int?)null,
+                                        CmdId = r.CmdId ?? (p != null ? p.CmdId : (int?)null),
                                         CmdName = cmd != null ? cmd.Name : string.Empty,
-                                        BaseId = p != null ? p.BaseId : (int?)null,
+                                        BaseId = r.BaseId ?? (p != null ? p.BaseId : (int?)null),
                                         BaseName = b != null ? b.Name : string.Empty,
                                         ClassId = p != null ? p.ClassId : (int?)null,
                                         ClassName = cls != null ? cls.Name : string.Empty,
@@ -140,6 +155,7 @@ namespace A1.Api.Controllers
                                         Location = p != null ? p.Location : null,
                                         Remarks = p != null ? p.Remarks : null,
                                         ApplicableDate = r.ApplicableDate,
+                                        DeactiveDate = r.DeactiveDate,
                                         Rate = r.Rate,
                                         Attachments = r.Attachments,
                                         Status = r.Status,
@@ -200,8 +216,23 @@ namespace A1.Api.Controllers
                 return NotFound("Revenue rate not found.");
             }
 
+            var oldValuesJson = JsonSerializer.Serialize(new
+            {
+                existing.PropertyId,
+                existing.CmdId,
+                existing.BaseId,
+                existing.ApplicableDate,
+                existing.DeactiveDate,
+                existing.Rate,
+                existing.Attachments,
+                existing.Status
+            });
+
             existing.PropertyId = revenueRate.PropertyId;
+            existing.CmdId = revenueRate.CmdId;
+            existing.BaseId = revenueRate.BaseId;
             existing.ApplicableDate = revenueRate.ApplicableDate;
+            existing.DeactiveDate = revenueRate.DeactiveDate;
             existing.Rate = revenueRate.Rate;
             existing.Attachments = revenueRate.Attachments;
             existing.Status = revenueRate.Status;
@@ -210,6 +241,28 @@ namespace A1.Api.Controllers
             existing.ActionBy = revenueRate.ActionBy;
 
             await _repository.UpdateAsync(existing);
+
+            var newValuesJson = JsonSerializer.Serialize(new
+            {
+                existing.PropertyId,
+                existing.CmdId,
+                existing.BaseId,
+                existing.ApplicableDate,
+                existing.DeactiveDate,
+                existing.Rate,
+                existing.Attachments,
+                existing.Status
+            });
+            await _auditLogService.LogAsync(new AuditLog
+            {
+                EntityName = "RevenueRate",
+                EntityId = id,
+                OldValuesJson = oldValuesJson,
+                NewValuesJson = newValuesJson,
+                ActionBy = GetActionBy(User),
+                Action = "API"
+            });
+
             return NoContent();
         }
 
@@ -223,6 +276,19 @@ namespace A1.Api.Controllers
             {
                 return NotFound("Revenue rate not found.");
             }
+
+            var oldValuesJson = JsonSerializer.Serialize(new
+            {
+                revenueRate.PropertyId,
+                revenueRate.CmdId,
+                revenueRate.BaseId,
+                revenueRate.ApplicableDate,
+                revenueRate.DeactiveDate,
+                revenueRate.Rate,
+                revenueRate.Attachments,
+                revenueRate.Status,
+                revenueRate.IsDeleted
+            });
 
             var actionBy = request?.ActionBy;
             if (string.IsNullOrWhiteSpace(actionBy))
@@ -243,6 +309,16 @@ namespace A1.Api.Controllers
 
             _context.RevenueRates.Update(revenueRate);
             await _context.SaveChangesAsync();
+
+            await _auditLogService.LogAsync(new AuditLog
+            {
+                EntityName = "RevenueRate",
+                EntityId = id,
+                OldValuesJson = oldValuesJson,
+                NewValuesJson = JsonSerializer.Serialize(new { IsDeleted = true, Action = "DELETE" }),
+                ActionBy = GetActionBy(User),
+                Action = "API"
+            });
 
             return NoContent();
         }

@@ -27,6 +27,7 @@ namespace A1.Api.Models
         public DbSet<SharingFormula> SharingFormulas { get; set; }
         public DbSet<BankList> BankLists { get; set; }
         public DbSet<PropertyType> PropertyTypes { get; set; }
+        public DbSet<AuditLog> AuditLogs { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -36,6 +37,17 @@ namespace A1.Api.Models
             modelBuilder.Entity<PropertyGroup>().ToTable("PropertyGroups", "dbo");
             modelBuilder.Entity<ContractRiseTerm>().ToTable("ContractRiseTerms", "dbo");
             modelBuilder.Entity<UserNote>().ToTable("UserNotes", "dbo");
+
+            modelBuilder.Entity<AuditLog>(e =>
+            {
+                e.ToTable("AuditLog", "dbo");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).ValueGeneratedOnAdd();
+                e.Property(x => x.EntityName).HasMaxLength(150);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionDateTime).HasPrecision(3);
+            });
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {

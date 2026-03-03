@@ -363,15 +363,17 @@ namespace A1.Api.Controllers
                              && rr.Rate != null)
                 .OrderByDescending(rr => rr.ApplicableDate)
                 .ThenByDescending(rr => rr.Id)
-                .Select(rr => new { rr.PropertyId, rr.Rate })
+                .Select(rr => new { rr.PropertyId, rr.Rate, rr.ApplicableDate })
                 .ToListAsync();
 
             var rateByPropertyId = new Dictionary<int, decimal?>();
+            var applicableDateByPropertyId = new Dictionary<int, DateTime?>();
             foreach (var row in rateRows)
             {
                 if (!rateByPropertyId.ContainsKey(row.PropertyId))
                 {
                     rateByPropertyId[row.PropertyId] = row.Rate;
+                    applicableDateByPropertyId[row.PropertyId] = row.ApplicableDate;
                 }
             }
 
@@ -389,7 +391,8 @@ namespace A1.Api.Controllers
                 p.Remarks,
                 p.PropertyType,
                 p.PropertyTypeName,
-                Rate = rateByPropertyId.TryGetValue(p.Id, out var rate) ? rate : null
+                Rate = rateByPropertyId.TryGetValue(p.Id, out var rate) ? rate : null,
+                ApplicableDate = applicableDateByPropertyId.TryGetValue(p.Id, out var applicableDate) ? applicableDate : null
             }).ToList();
 
             var attachedPropertyIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(

@@ -38,6 +38,7 @@ namespace A1.Api.Models
         public bool Status { get; set; }
         public string? userIPAddress { get; set; }
         public string? Remarks { get; set; }
+        public string? ProfitRate { get; set; }
 
         [NotMapped]
         public List<ContractRiseTerm>? ContractRiseTerms { get; set; }

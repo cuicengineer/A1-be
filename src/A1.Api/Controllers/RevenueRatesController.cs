@@ -34,6 +34,16 @@ namespace A1.Api.Controllers
             return "System";
         }
 
+        /// <summary>
+        /// 1 = CmdId and BaseId both > 0; 2 = CmdId > 0 and BaseId is 0 or null; 3 = both 0 or null.
+        /// </summary>
+        private static byte GetRateScope(int? cmdId, int? baseId)
+        {
+            if (cmdId.GetValueOrDefault() > 0 && baseId.GetValueOrDefault() > 0) return 1;
+            if (cmdId.GetValueOrDefault() > 0) return 2;
+            return 3;
+        }
+
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
         {
@@ -187,6 +197,7 @@ namespace A1.Api.Controllers
             }
 
             revenueRate.IsDeleted = false;
+            revenueRate.RateScope = GetRateScope(revenueRate.CmdId, revenueRate.BaseId);
             await _repository.AddAsync(revenueRate);
             return CreatedAtAction(nameof(GetById), new { id = revenueRate.Id }, revenueRate);
         }
@@ -231,6 +242,7 @@ namespace A1.Api.Controllers
             existing.PropertyId = revenueRate.PropertyId;
             existing.CmdId = revenueRate.CmdId;
             existing.BaseId = revenueRate.BaseId;
+            existing.RateScope = GetRateScope(existing.CmdId, existing.BaseId);
             existing.ApplicableDate = revenueRate.ApplicableDate;
             existing.DeactiveDate = revenueRate.DeactiveDate;
             existing.Rate = revenueRate.Rate;

@@ -1,9 +1,11 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace A1.Api.Controllers
 {
@@ -22,11 +24,13 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<PropertyGroup> _repository;
         private readonly ApplicationDbContext _context;
+        private readonly IAuditLogService _auditLogService;
 
-        public PropertyGroupController(IGenericRepository<PropertyGroup> repository, ApplicationDbContext context)
+        public PropertyGroupController(IGenericRepository<PropertyGroup> repository, ApplicationDbContext context, IAuditLogService auditLogService)
         {
             _repository = repository;
             _context = context;
+            _auditLogService = auditLogService;
         }
 
         /// <summary>
@@ -632,6 +636,20 @@ namespace A1.Api.Controllers
                 return NotFound("PropertyGroup not found.");
             }
 
+            var oldValuesJson = JsonSerializer.Serialize(new
+            {
+                existingPropertyGroup.CmdId,
+                existingPropertyGroup.BaseId,
+                existingPropertyGroup.ClassId,
+                existingPropertyGroup.GId,
+                existingPropertyGroup.UoM,
+                existingPropertyGroup.Area,
+                existingPropertyGroup.Rate,
+                existingPropertyGroup.Location,
+                existingPropertyGroup.Remarks,
+                existingPropertyGroup.Status
+            });
+
             // Update properties efficiently
             existingPropertyGroup.CmdId = propertyGroup.CmdId;
             existingPropertyGroup.BaseId = propertyGroup.BaseId;
@@ -648,6 +666,30 @@ namespace A1.Api.Controllers
             existingPropertyGroup.ActionBy = propertyGroup.ActionBy;
 
             await _repository.UpdateAsync(existingPropertyGroup);
+
+            var newValuesJson = JsonSerializer.Serialize(new
+            {
+                existingPropertyGroup.CmdId,
+                existingPropertyGroup.BaseId,
+                existingPropertyGroup.ClassId,
+                existingPropertyGroup.GId,
+                existingPropertyGroup.UoM,
+                existingPropertyGroup.Area,
+                existingPropertyGroup.Rate,
+                existingPropertyGroup.Location,
+                existingPropertyGroup.Remarks,
+                existingPropertyGroup.Status
+            });
+            await _auditLogService.LogAsync(new AuditLog
+            {
+                EntityName = "PropertyGroup",
+                EntityId = id,
+                OldValuesJson = oldValuesJson,
+                NewValuesJson = newValuesJson,
+                ActionBy = GetCurrentUser(),
+                Action = "API"
+            });
+
             return NoContent();
         }
 

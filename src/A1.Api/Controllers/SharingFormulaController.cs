@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -27,11 +28,13 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<SharingFormula> _repository;
         private readonly ApplicationDbContext _context;
+        private readonly IAuditLogService _auditLogService;
 
-        public SharingFormulaController(IGenericRepository<SharingFormula> repository, ApplicationDbContext context)
+        public SharingFormulaController(IGenericRepository<SharingFormula> repository, ApplicationDbContext context, IAuditLogService auditLogService)
         {
             _repository = repository;
             _context = context;
+            _auditLogService = auditLogService;
         }
 
         /// <summary>
@@ -98,6 +101,7 @@ namespace A1.Api.Controllers
                                            ClassName = cls != null ? cls.Name : string.Empty,
                                            sf.Type,
                                            sf.ApplicableDate,
+                                           sf.DeactiveDate,
                                            sf.AHQRate,
                                            sf.RACRate,
                                            sf.BaseRate,
@@ -155,6 +159,7 @@ namespace A1.Api.Controllers
                                           ClassName = cls != null ? cls.Name : string.Empty,
                                           sf.Type,
                                           sf.ApplicableDate,
+                                          sf.DeactiveDate,
                                           sf.AHQRate,
                                           sf.RACRate,
                                           sf.BaseRate,
@@ -277,11 +282,28 @@ namespace A1.Api.Controllers
                 .FirstOrDefaultAsync(sf => sf.Id == id && (sf.IsDeleted == null || sf.IsDeleted == false));
             if (existing == null) return NotFound();
 
+            var oldValuesJson = JsonSerializer.Serialize(new
+            {
+                existing.ClassId,
+                existing.Type,
+                existing.CmdId,
+                existing.BaseId,
+                existing.ApplicableDate,
+                existing.DeactiveDate,
+                existing.AHQRate,
+                existing.RACRate,
+                existing.BaseRate,
+                existing.Description,
+                existing.Attachments,
+                existing.Status
+            });
+
             existing.ClassId = item.ClassId;
             existing.Type = item.Type;
             existing.CmdId = item.CmdId;
             existing.BaseId = item.BaseId;
             existing.ApplicableDate = item.ApplicableDate;
+            existing.DeactiveDate = item.DeactiveDate;
             existing.AHQRate = item.AHQRate;
             existing.RACRate = item.RACRate;
             existing.BaseRate = item.BaseRate;
@@ -293,6 +315,32 @@ namespace A1.Api.Controllers
             existing.ActionBy = item.ActionBy;
 
             await _repository.UpdateAsync(existing);
+
+            var newValuesJson = JsonSerializer.Serialize(new
+            {
+                existing.ClassId,
+                existing.Type,
+                existing.CmdId,
+                existing.BaseId,
+                existing.ApplicableDate,
+                existing.DeactiveDate,
+                existing.AHQRate,
+                existing.RACRate,
+                existing.BaseRate,
+                existing.Description,
+                existing.Attachments,
+                existing.Status
+            });
+            await _auditLogService.LogAsync(new AuditLog
+            {
+                EntityName = "SharingFormula",
+                EntityId = id,
+                OldValuesJson = oldValuesJson,
+                NewValuesJson = newValuesJson,
+                ActionBy = GetCurrentUser(),
+                Action = "API"
+            });
+
             return NoContent();
         }
 

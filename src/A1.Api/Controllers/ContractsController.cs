@@ -1,8 +1,11 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using System.Text.Json;
 
 namespace A1.Api.Controllers
 {
@@ -21,16 +24,27 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<Contract> _repository;
         private readonly ApplicationDbContext _context;
+        private readonly IAuditLogService _auditLogService;
 
         public class SearchByGrpNameRequest
         {
             public string GrpName { get; set; } = string.Empty;
         }
 
-        public ContractsController(IGenericRepository<Contract> repository, ApplicationDbContext context)
+        public ContractsController(IGenericRepository<Contract> repository, ApplicationDbContext context, IAuditLogService auditLogService)
         {
             _repository = repository;
             _context = context;
+            _auditLogService = auditLogService;
+        }
+
+        private static string GetActionBy(ClaimsPrincipal? user)
+        {
+            var name = user?.Identity?.Name;
+            if (!string.IsNullOrEmpty(name)) return name;
+            var claim = user?.FindFirst(ClaimTypes.Name) ?? user?.FindFirst(ClaimTypes.NameIdentifier);
+            if (claim != null && !string.IsNullOrEmpty(claim.Value)) return claim.Value;
+            return "System";
         }
 
         /// <summary>
@@ -114,6 +128,7 @@ namespace A1.Api.Controllers
                                        c.IsDeleted,
                                        c.userIPAddress,
                                        c.Remarks,
+                                       c.ProfitRate,
                                        ContractRiseTerms = _context.ContractRiseTerms
                                             .AsNoTracking()
                                             .Where(r => r.ContractId == c.Id && (r.IsDeleted == null || r.IsDeleted == false))
@@ -201,6 +216,7 @@ namespace A1.Api.Controllers
                                        c.IsDeleted,
                                        c.userIPAddress,
                                        c.Remarks,
+                                       c.ProfitRate,
                                        ContractRiseTerms = _context.ContractRiseTerms
                                             .AsNoTracking()
                                             .Where(r => r.ContractId == c.Id && (r.IsDeleted == null || r.IsDeleted == false))
@@ -330,7 +346,8 @@ namespace A1.Api.Controllers
                                        c.Action,
                                        c.IsDeleted,
                                        c.userIPAddress,
-                                       c.Remarks
+                                       c.Remarks,
+                                       c.ProfitRate
                                    })
                 .OrderByDescending(x => x.Id)
                 .ToListAsync();
@@ -368,6 +385,43 @@ namespace A1.Api.Controllers
                 return NotFound("Contract not found.");
             }
 
+            var oldValuesJson = JsonSerializer.Serialize(new
+            {
+                existingContract.ContractNo,
+                existingContract.CmdId,
+                existingContract.BaseId,
+                existingContract.ClassId,
+                existingContract.GrpId,
+                existingContract.TenantNo,
+                existingContract.BusinessName,
+                existingContract.NatureOfBusiness,
+                existingContract.ContractStartDate,
+                existingContract.ContractEndDate,
+                existingContract.CommercialOperationDate,
+                existingContract.RiseTermType,
+                existingContract.RiseDate,
+                existingContract.RiseYear,
+                existingContract.InitialRentPM,
+                existingContract.InitialRentPA,
+                existingContract.PaymentTermMonths,
+                existingContract.IncreaseRatePercent,
+                existingContract.IncreaseIntervalMonths,
+                existingContract.SDRateMonths,
+                existingContract.SecurityDepositAmount,
+                existingContract.RentalValue,
+                existingContract.GovtShare,
+                existingContract.PAFShare,
+                existingContract.GroupArea,
+                existingContract.GroupRate,
+                existingContract.RentalValueRate,
+                existingContract.VaArea,
+                existingContract.Status,
+                existingContract.Term,
+                existingContract.userIPAddress,
+                existingContract.Remarks,
+                existingContract.ProfitRate
+            });
+
             // Update properties efficiently
             existingContract.ContractNo = contract.ContractNo;
             existingContract.CmdId = contract.CmdId;
@@ -404,6 +458,7 @@ namespace A1.Api.Controllers
             existingContract.ActionBy = contract.ActionBy;
             existingContract.userIPAddress = contract.userIPAddress;
             existingContract.Remarks = contract.Remarks;
+            existingContract.ProfitRate = contract.ProfitRate;
 
             if (contract.ContractRiseTerms != null && contract.ContractRiseTerms.Count > 0)
             {
@@ -446,6 +501,53 @@ namespace A1.Api.Controllers
             }
 
             await _repository.UpdateAsync(existingContract);
+
+            var newValuesJson = JsonSerializer.Serialize(new
+            {
+                existingContract.ContractNo,
+                existingContract.CmdId,
+                existingContract.BaseId,
+                existingContract.ClassId,
+                existingContract.GrpId,
+                existingContract.TenantNo,
+                existingContract.BusinessName,
+                existingContract.NatureOfBusiness,
+                existingContract.ContractStartDate,
+                existingContract.ContractEndDate,
+                existingContract.CommercialOperationDate,
+                existingContract.RiseTermType,
+                existingContract.RiseDate,
+                existingContract.RiseYear,
+                existingContract.InitialRentPM,
+                existingContract.InitialRentPA,
+                existingContract.PaymentTermMonths,
+                existingContract.IncreaseRatePercent,
+                existingContract.IncreaseIntervalMonths,
+                existingContract.SDRateMonths,
+                existingContract.SecurityDepositAmount,
+                existingContract.RentalValue,
+                existingContract.GovtShare,
+                existingContract.PAFShare,
+                existingContract.GroupArea,
+                existingContract.GroupRate,
+                existingContract.RentalValueRate,
+                existingContract.VaArea,
+                existingContract.Status,
+                existingContract.Term,
+                existingContract.userIPAddress,
+                existingContract.Remarks,
+                existingContract.ProfitRate
+            });
+            await _auditLogService.LogAsync(new AuditLog
+            {
+                EntityName = "Contract",
+                EntityId = id,
+                OldValuesJson = oldValuesJson,
+                NewValuesJson = newValuesJson,
+                ActionBy = GetActionBy(User),
+                Action = "API"
+            });
+
             return NoContent();
         }
 

@@ -1,10 +1,13 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
+using System.Security.Claims;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace A1.Api.Controllers
@@ -15,11 +18,22 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<RentalValueGovtShareRate> _repository;
         private readonly ApplicationDbContext _context;
+        private readonly IAuditLogService _auditLogService;
 
-        public RentalValueGovtShareRatesController(IGenericRepository<RentalValueGovtShareRate> repository, ApplicationDbContext context)
+        public RentalValueGovtShareRatesController(IGenericRepository<RentalValueGovtShareRate> repository, ApplicationDbContext context, IAuditLogService auditLogService)
         {
             _repository = repository;
             _context = context;
+            _auditLogService = auditLogService;
+        }
+
+        private static string GetActionBy(ClaimsPrincipal? user)
+        {
+            var name = user?.Identity?.Name;
+            if (!string.IsNullOrEmpty(name)) return name;
+            var claim = user?.FindFirst(ClaimTypes.Name) ?? user?.FindFirst(ClaimTypes.NameIdentifier);
+            if (claim != null && !string.IsNullOrEmpty(claim.Value)) return claim.Value;
+            return "System";
         }
 
 
@@ -60,8 +74,7 @@ namespace A1.Api.Controllers
 
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
                 _context,
-                items.Select(x => x.Id),
-                "RentalValueGovtShareRates", "RentalValueGovtShareRate");
+                items.Select(x => x.Id));
             var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(items, x => x.Id, attachedIds);
             return Ok(response);
         }
@@ -79,8 +92,7 @@ namespace A1.Api.Controllers
             if (item == null) return NotFound();
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
                 _context,
-                new[] { item.Id },
-                "RentalValueGovtShareRates", "RentalValueGovtShareRate");
+                new[] { item.Id });
             return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(item, attachedIds.Contains(item.Id)));
         }
 
@@ -108,8 +120,23 @@ namespace A1.Api.Controllers
                 .FirstOrDefaultAsync(r => r.Id == id && (r.IsDeleted == null || r.IsDeleted == false));
             if (existing == null) return NotFound();
 
+            var oldValuesJson = JsonSerializer.Serialize(new
+            {
+                existing.ClassId,
+                existing.ApplicableDate,
+                existing.DeactiveDate,
+                existing.Rate,
+                existing.Type,
+                existing.CmdId,
+                existing.BaseId,
+                existing.Description,
+                existing.Attachments,
+                existing.Status
+            });
+
             existing.ClassId = item.ClassId;
             existing.ApplicableDate = item.ApplicableDate;
+            existing.DeactiveDate = item.DeactiveDate;
             existing.Rate = item.Rate;
             existing.Type = item.Type;
             existing.CmdId = item.CmdId;
@@ -122,6 +149,30 @@ namespace A1.Api.Controllers
             existing.ActionBy = item.ActionBy;
 
             await _repository.UpdateAsync(existing);
+
+            var newValuesJson = JsonSerializer.Serialize(new
+            {
+                existing.ClassId,
+                existing.ApplicableDate,
+                existing.DeactiveDate,
+                existing.Rate,
+                existing.Type,
+                existing.CmdId,
+                existing.BaseId,
+                existing.Description,
+                existing.Attachments,
+                existing.Status
+            });
+            await _auditLogService.LogAsync(new AuditLog
+            {
+                EntityName = "RentalValueGovtShareRate",
+                EntityId = id,
+                OldValuesJson = oldValuesJson,
+                NewValuesJson = newValuesJson,
+                ActionBy = GetActionBy(User),
+                Action = "API"
+            });
+
             return NoContent();
         }
 

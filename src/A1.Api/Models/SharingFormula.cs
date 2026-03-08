@@ -9,6 +9,7 @@ namespace A1.Api.Models
         public int? CmdId { get; set; }
         public int? BaseId { get; set; }
         public DateTime? ApplicableDate { get; set; }
+        public DateTime? DeactiveDate { get; set; }
         public decimal AHQRate { get; set; }
         public decimal RACRate { get; set; }
         public decimal BaseRate { get; set; }

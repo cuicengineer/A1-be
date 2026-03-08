@@ -7,6 +7,7 @@ namespace A1.Api.Models
         public int PropertyId { get; set; }
         public int? CmdId { get; set; }
         public int? BaseId { get; set; }
+        public byte? RateScope { get; set; }
         public DateTime? ApplicableDate { get; set; }
         public DateTime? DeactiveDate { get; set; }
         public decimal? Rate { get; set; }

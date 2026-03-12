@@ -1,9 +1,9 @@
 using A1.Api.Models;
 using A1.Api.Services;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Collections.Generic;
-using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -20,15 +20,6 @@ namespace A1.Api.Controllers
             _auditLogService = auditLogService;
         }
 
-        private static string GetActionBy(ClaimsPrincipal? user)
-        {
-            var name = user?.Identity?.Name;
-            if (!string.IsNullOrEmpty(name)) return name;
-            var claim = user?.FindFirst(ClaimTypes.Name) ?? user?.FindFirst(ClaimTypes.NameIdentifier);
-            if (claim != null && !string.IsNullOrEmpty(claim.Value)) return claim.Value;
-            return "System";
-        }
-
         /// <summary>
         /// POST: Log a single audit entry. ActionBy is set from the current user (login).
         /// </summary>
@@ -38,7 +29,7 @@ namespace A1.Api.Controllers
             if (request == null || string.IsNullOrWhiteSpace(request.EntityName))
                 return BadRequest("EntityName is required.");
 
-            var actionBy = GetActionBy(User);
+            var actionBy = ActionByHelper.GetActionByWithIp(User, HttpContext);
             var action = string.IsNullOrWhiteSpace(request.Action) ? "API" : request.Action.Trim();
             if (action.Length > 50) action = action.Substring(0, 50);
 
@@ -66,7 +57,7 @@ namespace A1.Api.Controllers
             if (requests == null || requests.Count == 0)
                 return BadRequest("At least one audit entry is required.");
 
-            var actionBy = GetActionBy(User);
+            var actionBy = ActionByHelper.GetActionByWithIp(User, HttpContext);
             var now = DateTime.UtcNow;
             var entries = new List<AuditLog>(requests.Count);
 

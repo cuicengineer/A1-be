@@ -38,25 +38,6 @@ namespace A1.Api.Controllers
         }
 
         /// <summary>
-        /// Helper method to get the current user for ActionBy tracking
-        /// </summary>
-        private string GetCurrentUser()
-        {
-            // Try to get from User claims first
-            var userName = User?.Identity?.Name;
-            if (!string.IsNullOrEmpty(userName))
-                return userName;
-
-            // Try to get from claims
-            var claim = User?.FindFirst(ClaimTypes.Name) ?? User?.FindFirst(ClaimTypes.NameIdentifier);
-            if (claim != null && !string.IsNullOrEmpty(claim.Value))
-                return claim.Value;
-
-            // Fallback to "System" if no user context available
-            return "System";
-        }
-
-        /// <summary>
         /// GET: Get all sharing formulas (only returns records where IsDeleted = 0 or null)
         /// Maps CmdId, BaseId, ClassId to their respective Name values
         /// </summary>
@@ -312,7 +293,7 @@ namespace A1.Api.Controllers
             existing.Status = item.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
-            existing.ActionBy = item.ActionBy;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
 
             await _repository.UpdateAsync(existing);
 
@@ -337,7 +318,7 @@ namespace A1.Api.Controllers
                 EntityId = id,
                 OldValuesJson = oldValuesJson,
                 NewValuesJson = newValuesJson,
-                ActionBy = GetCurrentUser(),
+                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
                 Action = "API"
             });
 
@@ -357,7 +338,6 @@ namespace A1.Api.Controllers
             // ActionBy should come from payload if provided, otherwise keep existing value
             if (string.IsNullOrWhiteSpace(existing.ActionBy))
             {
-                // If payload doesn't have ActionBy, preserve existing value
                 var existingActionBy = await _context.SharingFormulas
                     .AsNoTracking()
                     .Where(sf => sf.Id == id)
@@ -365,6 +345,7 @@ namespace A1.Api.Controllers
                     .FirstOrDefaultAsync();
                 existing.ActionBy = existingActionBy;
             }
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
 
             existing.IsDeleted = true;
             existing.ActionDate = DateTime.UtcNow;

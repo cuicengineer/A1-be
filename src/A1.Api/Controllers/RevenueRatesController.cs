@@ -25,15 +25,6 @@ namespace A1.Api.Controllers
             _auditLogService = auditLogService;
         }
 
-        private static string GetActionBy(ClaimsPrincipal? user)
-        {
-            var name = user?.Identity?.Name;
-            if (!string.IsNullOrEmpty(name)) return name;
-            var claim = user?.FindFirst(ClaimTypes.Name) ?? user?.FindFirst(ClaimTypes.NameIdentifier);
-            if (claim != null && !string.IsNullOrEmpty(claim.Value)) return claim.Value;
-            return "System";
-        }
-
         /// <summary>
         /// 1 = CmdId and BaseId both > 0; 2 = CmdId > 0 and BaseId is 0 or null; 3 = both 0 or null.
         /// </summary>
@@ -198,6 +189,7 @@ namespace A1.Api.Controllers
 
             revenueRate.IsDeleted = false;
             revenueRate.RateScope = GetRateScope(revenueRate.CmdId, revenueRate.BaseId);
+            revenueRate.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);
             await _repository.AddAsync(revenueRate);
             return CreatedAtAction(nameof(GetById), new { id = revenueRate.Id }, revenueRate);
         }
@@ -250,7 +242,7 @@ namespace A1.Api.Controllers
             existing.Status = revenueRate.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
-            existing.ActionBy = revenueRate.ActionBy;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);
 
             await _repository.UpdateAsync(existing);
 
@@ -271,7 +263,7 @@ namespace A1.Api.Controllers
                 EntityId = id,
                 OldValuesJson = oldValuesJson,
                 NewValuesJson = newValuesJson,
-                ActionBy = GetActionBy(User),
+                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
                 Action = "API"
             });
 
@@ -317,7 +309,7 @@ namespace A1.Api.Controllers
             revenueRate.IsDeleted = true;
             revenueRate.Action = "DELETE";
             revenueRate.ActionDate = DateTime.UtcNow;
-            revenueRate.ActionBy = actionBy;
+            revenueRate.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
 
             _context.RevenueRates.Update(revenueRate);
             await _context.SaveChangesAsync();
@@ -328,7 +320,7 @@ namespace A1.Api.Controllers
                 EntityId = id,
                 OldValuesJson = oldValuesJson,
                 NewValuesJson = JsonSerializer.Serialize(new { IsDeleted = true, Action = "DELETE" }),
-                ActionBy = GetActionBy(User),
+                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
                 Action = "API"
             });
 

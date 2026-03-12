@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -120,7 +121,7 @@ namespace A1.Api.Controllers
             existingBankList.Status = bankList.Status;
             existingBankList.ActionDate = DateTime.UtcNow;
             existingBankList.Action = "UPDATE";
-            existingBankList.ActionBy = bankList.ActionBy;
+            existingBankList.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, bankList.ActionBy);
 
             await _repository.UpdateAsync(existingBankList);
             return NoContent();
@@ -144,10 +145,8 @@ namespace A1.Api.Controllers
             bankList.IsDeleted = true;
             bankList.Action = "DELETE";
             bankList.ActionDate = DateTime.UtcNow;
-            // ActionBy should come from payload if provided, otherwise keep existing value
             if (string.IsNullOrWhiteSpace(bankList.ActionBy))
             {
-                // If payload doesn't have ActionBy, preserve existing value
                 var existingActionBy = await _context.BankLists
                     .AsNoTracking()
                     .Where(b => b.Id == id)
@@ -155,6 +154,7 @@ namespace A1.Api.Controllers
                     .FirstOrDefaultAsync();
                 bankList.ActionBy = existingActionBy;
             }
+            bankList.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, bankList.ActionBy);
 
             _context.BankLists.Update(bankList);
             await _context.SaveChangesAsync();

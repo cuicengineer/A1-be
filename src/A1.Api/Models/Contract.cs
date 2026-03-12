@@ -19,6 +19,7 @@ namespace A1.Api.Models
         public DateTime? CommercialOperationDate { get; set; }
         public decimal InitialRentPM { get; set; }
         public decimal InitialRentPA { get; set; }
+        public decimal? currentRentPA { get; set; }
         public int PaymentTermMonths { get; set; }
         public decimal? IncreaseRatePercent { get; set; }
         public int? IncreaseIntervalMonths { get; set; }

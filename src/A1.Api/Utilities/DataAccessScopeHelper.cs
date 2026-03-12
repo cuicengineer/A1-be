@@ -79,6 +79,61 @@ namespace A1.Api.Utilities
 
         public static IQueryable<TEntity> ApplyScope<TEntity>(IQueryable<TEntity> query, DataAccessScope scope) where TEntity : class
         {
+            // Special handling for Command entity:
+            // - AHQ: all commands
+            // - Command/Base level: only the user's command (by CmdId)
+            if (typeof(TEntity) == typeof(Command))
+            {
+                var cmdQuery = (IQueryable<Command>)query;
+                if (!scope.IsAhq)
+                {
+                    if (scope.CmdId.HasValue)
+                    {
+                        cmdQuery = cmdQuery.Where(c => c.Id == scope.CmdId.Value);
+                    }
+                    else
+                    {
+                        cmdQuery = cmdQuery.Where(_ => false);
+                    }
+                }
+                return (IQueryable<TEntity>)cmdQuery;
+            }
+
+            // Special handling for Base entity:
+            // - AHQ: all bases
+            // - Command level: all bases in the user's command (Base.Cmd == CmdId)
+            // - Base level: only the user's base (Base.Id == BaseId)
+            if (typeof(TEntity) == typeof(Base))
+            {
+                var baseQuery = (IQueryable<Base>)query;
+                if (!scope.IsAhq)
+                {
+                    if (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (scope.CmdId.HasValue)
+                        {
+                            baseQuery = baseQuery.Where(b => b.Cmd == scope.CmdId.Value);
+                        }
+                        else
+                        {
+                            baseQuery = baseQuery.Where(_ => false);
+                        }
+                    }
+                    else
+                    {
+                        if (scope.BaseId.HasValue)
+                        {
+                            baseQuery = baseQuery.Where(b => b.Id == scope.BaseId.Value);
+                        }
+                        else
+                        {
+                            baseQuery = baseQuery.Where(_ => false);
+                        }
+                    }
+                }
+                return (IQueryable<TEntity>)baseQuery;
+            }
+
             if (scope.IsAhq)
             {
                 return query;
@@ -105,6 +160,56 @@ namespace A1.Api.Utilities
 
         public static IQueryable ApplyScope(IQueryable query, Type entityType, DataAccessScope scope)
         {
+            // Special handling for Command entity:
+            if (entityType == typeof(Command))
+            {
+                var cmdQuery = (IQueryable<Command>)query;
+                if (!scope.IsAhq)
+                {
+                    if (scope.CmdId.HasValue)
+                    {
+                        cmdQuery = cmdQuery.Where(c => c.Id == scope.CmdId.Value);
+                    }
+                    else
+                    {
+                        cmdQuery = cmdQuery.Where(_ => false);
+                    }
+                }
+                return cmdQuery;
+            }
+
+            // Special handling for Base entity:
+            if (entityType == typeof(Base))
+            {
+                var baseQuery = (IQueryable<Base>)query;
+                if (!scope.IsAhq)
+                {
+                    if (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (scope.CmdId.HasValue)
+                        {
+                            baseQuery = baseQuery.Where(b => b.Cmd == scope.CmdId.Value);
+                        }
+                        else
+                        {
+                            baseQuery = baseQuery.Where(_ => false);
+                        }
+                    }
+                    else
+                    {
+                        if (scope.BaseId.HasValue)
+                        {
+                            baseQuery = baseQuery.Where(b => b.Id == scope.BaseId.Value);
+                        }
+                        else
+                        {
+                            baseQuery = baseQuery.Where(_ => false);
+                        }
+                    }
+                }
+                return baseQuery;
+            }
+
             if (scope.IsAhq)
             {
                 return query;

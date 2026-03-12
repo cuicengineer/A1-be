@@ -141,7 +141,7 @@ namespace A1.Api.Controllers
             existing.Status = item.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
-            existing.ActionBy = item.ActionBy;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
 
             await _repository.UpdateAsync(existing);
             return NoContent();
@@ -169,7 +169,7 @@ namespace A1.Api.Controllers
             existing.IsDeleted = true;
             existing.Action = "DELETE";
             existing.ActionDate = DateTime.UtcNow;
-            existing.ActionBy = actionBy;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
 
             _context.ContractRiseTerms.Update(existing);
             await _context.SaveChangesAsync();

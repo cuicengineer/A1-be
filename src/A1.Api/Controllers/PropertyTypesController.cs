@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -142,10 +143,8 @@ namespace A1.Api.Controllers
             propertyType.IsDeleted = true;
             propertyType.Action = "DELETE";
             propertyType.ActionDate = DateTime.UtcNow;
-            // ActionBy should come from payload if provided, otherwise keep existing value
             if (string.IsNullOrWhiteSpace(propertyType.ActionBy))
             {
-                // If payload doesn't have ActionBy, preserve existing value
                 var existingActionBy = await _context.PropertyTypes
                     .AsNoTracking()
                     .Where(pt => pt.Id == id)
@@ -153,6 +152,7 @@ namespace A1.Api.Controllers
                     .FirstOrDefaultAsync();
                 propertyType.ActionBy = existingActionBy;
             }
+            propertyType.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, propertyType.ActionBy);
 
             _context.PropertyTypes.Update(propertyType);
             await _context.SaveChangesAsync();

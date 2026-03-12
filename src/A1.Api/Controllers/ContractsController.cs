@@ -4,6 +4,7 @@ using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Data;
 using System.Security.Claims;
 using System.Text.Json;
 
@@ -38,13 +39,64 @@ namespace A1.Api.Controllers
             _auditLogService = auditLogService;
         }
 
-        private static string GetActionBy(ClaimsPrincipal? user)
+        /// <summary>
+        /// GET: Get all active contracts as of a given date using a stored procedure.
+        /// This endpoint is optimized for large result sets and heavy stored procedure processing.
+        /// Route: GET /api/Contracts/ActiveByAsOfDate?asOfDate=2025-01-01
+        /// </summary>
+        [HttpGet("ActiveByAsOfDate")]
+        public async Task<IActionResult> GetActiveContractsByAsOfDate(
+            [FromQuery] DateTime asOfDate,
+            CancellationToken cancellationToken = default)
         {
-            var name = user?.Identity?.Name;
-            if (!string.IsNullOrEmpty(name)) return name;
-            var claim = user?.FindFirst(ClaimTypes.Name) ?? user?.FindFirst(ClaimTypes.NameIdentifier);
-            if (claim != null && !string.IsNullOrEmpty(claim.Value)) return claim.Value;
-            return "System";
+            if (asOfDate == default)
+            {
+                return BadRequest("asOfDate query parameter is required.");
+            }
+
+            await using var connection = _context.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+            {
+                await connection.OpenAsync(cancellationToken);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "dbo.sp_GetActiveContractsAsOfDate";
+            command.CommandType = CommandType.StoredProcedure;
+
+            var param = command.CreateParameter();
+            param.ParameterName = "@AsOfDate";
+            param.DbType = DbType.Date;
+            param.Value = asOfDate.Date;
+            command.Parameters.Add(param);
+
+            command.CommandTimeout = 120;
+
+            var results = new List<Dictionary<string, object?>>();
+
+            await using var reader = await command.ExecuteReaderAsync(
+                CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
+                cancellationToken);
+
+            var fieldCount = reader.FieldCount;
+            var names = new string[fieldCount];
+            for (int i = 0; i < fieldCount; i++)
+            {
+                names[i] = reader.GetName(i);
+            }
+
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < fieldCount; i++)
+                {
+                    var value = reader.GetValue(i);
+                    row[names[i]] = value == DBNull.Value ? null : value;
+                }
+                results.Add(row);
+            }
+
+            return Ok(results);
         }
 
         /// <summary>
@@ -108,6 +160,7 @@ namespace A1.Api.Controllers
                                        c.RiseYear,
                                        c.InitialRentPM,
                                        c.InitialRentPA,
+                                       c.currentRentPA,
                                        c.PaymentTermMonths,
                                        c.IncreaseRatePercent,
                                        c.IncreaseIntervalMonths,
@@ -196,6 +249,7 @@ namespace A1.Api.Controllers
                                        c.RiseYear,
                                        c.InitialRentPM,
                                        c.InitialRentPA,
+                                       c.currentRentPA,
                                        c.PaymentTermMonths,
                                        c.IncreaseRatePercent,
                                        c.IncreaseIntervalMonths,
@@ -250,6 +304,7 @@ namespace A1.Api.Controllers
 
             // Set IsDeleted = false by default
             contract.IsDeleted = false;
+            contract.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, contract.ActionBy);
             // ActionDate and Action will be set by the repository
             using var tx = await _context.Database.BeginTransactionAsync();
             await _repository.AddAsync(contract); // saves and sets Id
@@ -257,6 +312,7 @@ namespace A1.Api.Controllers
             if (contract.ContractRiseTerms != null && contract.ContractRiseTerms.Count > 0)
             {
                 var now = DateTime.UtcNow;
+                var actionByWithIp = ActionByHelper.GetActionByWithIp(User, HttpContext, contract.ActionBy);
                 var terms = contract.ContractRiseTerms.Select(term => new ContractRiseTerm
                 {
                     ContractId = contract.Id,
@@ -267,7 +323,7 @@ namespace A1.Api.Controllers
                     IsDeleted = false,
                     Action = "CREATE",
                     ActionDate = now,
-                    ActionBy = contract.ActionBy
+                    ActionBy = actionByWithIp
                 }).ToList();
 
                 await _context.ContractRiseTerms.AddRangeAsync(terms);
@@ -327,6 +383,7 @@ namespace A1.Api.Controllers
                                        c.CommercialOperationDate,
                                        c.InitialRentPM,
                                        c.InitialRentPA,
+                                       c.currentRentPA,
                                        c.PaymentTermMonths,
                                        c.IncreaseRatePercent,
                                        c.IncreaseIntervalMonths,
@@ -403,6 +460,7 @@ namespace A1.Api.Controllers
                 existingContract.RiseYear,
                 existingContract.InitialRentPM,
                 existingContract.InitialRentPA,
+                existingContract.currentRentPA,
                 existingContract.PaymentTermMonths,
                 existingContract.IncreaseRatePercent,
                 existingContract.IncreaseIntervalMonths,
@@ -439,6 +497,7 @@ namespace A1.Api.Controllers
             existingContract.RiseYear = contract.RiseYear;
             existingContract.InitialRentPM = contract.InitialRentPM;
             existingContract.InitialRentPA = contract.InitialRentPA;
+            existingContract.currentRentPA = contract.currentRentPA;
             existingContract.PaymentTermMonths = contract.PaymentTermMonths;
             existingContract.IncreaseRatePercent = contract.IncreaseRatePercent;
             existingContract.IncreaseIntervalMonths = contract.IncreaseIntervalMonths;
@@ -455,7 +514,7 @@ namespace A1.Api.Controllers
             existingContract.Term = contract.Term;
             existingContract.ActionDate = DateTime.UtcNow;
             existingContract.Action = "UPDATE";
-            existingContract.ActionBy = contract.ActionBy;
+            existingContract.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, contract.ActionBy);
             existingContract.userIPAddress = contract.userIPAddress;
             existingContract.Remarks = contract.Remarks;
             existingContract.ProfitRate = contract.ProfitRate;
@@ -478,7 +537,7 @@ namespace A1.Api.Controllers
                         existingTerm.Status = term.Status;
                         existingTerm.ActionDate = now;
                         existingTerm.Action = "UPDATE";
-                        existingTerm.ActionBy = contract.ActionBy;
+                        existingTerm.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, contract.ActionBy);
                         _context.ContractRiseTerms.Update(existingTerm);
                     }
                     else
@@ -493,7 +552,7 @@ namespace A1.Api.Controllers
                             IsDeleted = false,
                             ActionDate = now,
                             Action = "CREATE",
-                            ActionBy = contract.ActionBy
+                            ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, contract.ActionBy)
                         };
                         await _context.ContractRiseTerms.AddAsync(newTerm);
                     }
@@ -520,6 +579,7 @@ namespace A1.Api.Controllers
                 existingContract.RiseYear,
                 existingContract.InitialRentPM,
                 existingContract.InitialRentPA,
+                existingContract.currentRentPA,
                 existingContract.PaymentTermMonths,
                 existingContract.IncreaseRatePercent,
                 existingContract.IncreaseIntervalMonths,
@@ -544,7 +604,7 @@ namespace A1.Api.Controllers
                 EntityId = id,
                 OldValuesJson = oldValuesJson,
                 NewValuesJson = newValuesJson,
-                ActionBy = GetActionBy(User),
+                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
                 Action = "API"
             });
 
@@ -569,6 +629,7 @@ namespace A1.Api.Controllers
             contract.IsDeleted = true;
             contract.Action = "DELETE";
             contract.ActionDate = DateTime.UtcNow;
+            contract.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext);
             contract.userIPAddress = userIPAddress;
 
             _context.Contracts.Update(contract);

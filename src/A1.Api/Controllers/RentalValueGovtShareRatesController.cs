@@ -27,16 +27,6 @@ namespace A1.Api.Controllers
             _auditLogService = auditLogService;
         }
 
-        private static string GetActionBy(ClaimsPrincipal? user)
-        {
-            var name = user?.Identity?.Name;
-            if (!string.IsNullOrEmpty(name)) return name;
-            var claim = user?.FindFirst(ClaimTypes.Name) ?? user?.FindFirst(ClaimTypes.NameIdentifier);
-            if (claim != null && !string.IsNullOrEmpty(claim.Value)) return claim.Value;
-            return "System";
-        }
-
-
         /// <summary>
         /// GET: Get all rental value govt share rates (only returns records where IsDeleted = false/null and Status = true)
         /// Supports pagination with pageNumber and pageSize query parameters
@@ -146,7 +136,7 @@ namespace A1.Api.Controllers
             existing.Status = item.Status;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
-            existing.ActionBy = item.ActionBy;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
 
             await _repository.UpdateAsync(existing);
 
@@ -169,7 +159,7 @@ namespace A1.Api.Controllers
                 EntityId = id,
                 OldValuesJson = oldValuesJson,
                 NewValuesJson = newValuesJson,
-                ActionBy = GetActionBy(User),
+                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
                 Action = "API"
             });
 
@@ -198,7 +188,7 @@ namespace A1.Api.Controllers
             existing.IsDeleted = true;
             existing.Action = "DELETE";
             existing.ActionDate = DateTime.UtcNow;
-            existing.ActionBy = actionBy;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
 
             _context.RentalValueGovtShareRates.Update(existing);
             await _context.SaveChangesAsync();

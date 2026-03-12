@@ -34,25 +34,6 @@ namespace A1.Api.Controllers
         }
 
         /// <summary>
-        /// Helper method to get the current user for ActionBy tracking
-        /// </summary>
-        private string GetCurrentUser()
-        {
-            // Try to get from User claims first
-            var userName = User?.Identity?.Name;
-            if (!string.IsNullOrEmpty(userName))
-                return userName;
-
-            // Try to get from claims
-            var claim = User?.FindFirst(ClaimTypes.Name) ?? User?.FindFirst(ClaimTypes.NameIdentifier);
-            if (claim != null && !string.IsNullOrEmpty(claim.Value))
-                return claim.Value;
-
-            // Fallback to "System" if no user context available
-            return "System";
-        }
-
-        /// <summary>
         /// GET: Get all property groups (only returns records where IsDeleted = 0 or null)
         /// Maps CmdId, BaseId, ClassId to their respective Name values
         /// </summary>
@@ -512,7 +493,7 @@ namespace A1.Api.Controllers
                         // Update PropertyGroup with calculated totals
                         propertyGroup.Area = totalArea;
                         propertyGroup.Rate = totalRate;
-                        propertyGroup.ActionBy = request.ActionBy;
+                        propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request.ActionBy);
                         await _context.SaveChangesAsync();
                     }
                 }
@@ -583,7 +564,7 @@ namespace A1.Api.Controllers
             request.IsDeleted = false;
             request.ActionDate = now;
             request.Action = "CREATE";
-            // ActionBy comes from payload
+            request.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request.ActionBy);
 
             await _context.PropertyGroupLinkings.AddAsync(request);
             await _context.SaveChangesAsync();
@@ -598,7 +579,7 @@ namespace A1.Api.Controllers
                 propertyGroup.Rate = (propertyGroup.Rate ?? 0) + propertyRate;
                 propertyGroup.ActionDate = DateTime.UtcNow;
                 propertyGroup.Action = "UPDATE";
-                propertyGroup.ActionBy = request.ActionBy;
+                propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request.ActionBy);
                 _context.PropertyGroups.Update(propertyGroup);
                 await _context.SaveChangesAsync();
             }
@@ -663,7 +644,7 @@ namespace A1.Api.Controllers
             existingPropertyGroup.Status = propertyGroup.Status;
             existingPropertyGroup.ActionDate = DateTime.UtcNow;
             existingPropertyGroup.Action = "UPDATE";
-            existingPropertyGroup.ActionBy = propertyGroup.ActionBy;
+            existingPropertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, propertyGroup.ActionBy);
 
             await _repository.UpdateAsync(existingPropertyGroup);
 
@@ -686,7 +667,7 @@ namespace A1.Api.Controllers
                 EntityId = id,
                 OldValuesJson = oldValuesJson,
                 NewValuesJson = newValuesJson,
-                ActionBy = GetCurrentUser(),
+                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
                 Action = "API"
             });
 
@@ -724,9 +705,10 @@ namespace A1.Api.Controllers
             propertyGroup.IsDeleted = true;
             propertyGroup.Action = "DELETE";
             propertyGroup.ActionDate = DateTime.UtcNow;
-            propertyGroup.ActionBy = actionBy;
+            propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
 
             // Also deactivate and soft delete related active linkings
+            var actionByWithIp = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
             var activeLinkings = await _context.PropertyGroupLinkings
                 .Where(l => l.GrpId == id && (l.IsDeleted == null || l.IsDeleted == false))
                 .ToListAsync();
@@ -739,7 +721,7 @@ namespace A1.Api.Controllers
                     linking.IsDeleted = true;
                     linking.Action = "DELETE";
                     linking.ActionDate = DateTime.UtcNow;
-                    linking.ActionBy = actionBy;
+                    linking.ActionBy = actionByWithIp;
                 }
 
                 _context.PropertyGroupLinkings.UpdateRange(activeLinkings);
@@ -815,7 +797,7 @@ namespace A1.Api.Controllers
 
                 propertyGroup.ActionDate = DateTime.UtcNow;
                 propertyGroup.Action = "UPDATE";
-                propertyGroup.ActionBy = actionBy;
+                propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
                 _context.PropertyGroups.Update(propertyGroup);
             }
 
@@ -824,7 +806,7 @@ namespace A1.Api.Controllers
             linking.Status = false;
             linking.Action = "DELETE";
             linking.ActionDate = DateTime.UtcNow;
-            linking.ActionBy = actionBy;
+            linking.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
 
             _context.PropertyGroupLinkings.Update(linking);
             await _context.SaveChangesAsync();

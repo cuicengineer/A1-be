@@ -1,4 +1,5 @@
 using A1.Api.Models;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -147,7 +148,7 @@ namespace A1.Api.Controllers
                         UploadedDate = DateTime.UtcNow,
                         ActionDate = DateTime.UtcNow,
                         Action = "CREATE",
-                        ActionBy = actionBy,
+                        ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy),
                         IsDeleted = false
                     };
 
@@ -422,7 +423,7 @@ namespace A1.Api.Controllers
                 fileUpload.IsDeleted = true;
                 fileUpload.Action = "DELETE";
                 fileUpload.ActionDate = DateTime.UtcNow;
-                fileUpload.ActionBy = actionBy;
+                fileUpload.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
 
                 _context.FileUploads.Update(fileUpload);
                 await _context.SaveChangesAsync();

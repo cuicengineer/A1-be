@@ -1,5 +1,6 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -121,7 +122,7 @@ namespace A1.Api.Controllers
             existingTenant.Remarks = tenant.Remarks;
             existingTenant.ActionDate = DateTime.UtcNow;
             existingTenant.Action = "UPDATE";
-            existingTenant.ActionBy = tenant.ActionBy;
+            existingTenant.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, tenant.ActionBy);
 
             await _repository.UpdateAsync(existingTenant);
             return NoContent();
@@ -145,10 +146,8 @@ namespace A1.Api.Controllers
             tenant.IsDeleted = true;
             tenant.Action = "DELETE";
             tenant.ActionDate = DateTime.UtcNow;
-            // ActionBy should come from payload if provided, otherwise keep existing value
             if (string.IsNullOrWhiteSpace(tenant.ActionBy))
             {
-                // If payload doesn't have ActionBy, preserve existing value
                 var existingActionBy = await _context.Tenants
                     .AsNoTracking()
                     .Where(t => t.Id == id)
@@ -156,6 +155,7 @@ namespace A1.Api.Controllers
                     .FirstOrDefaultAsync();
                 tenant.ActionBy = existingActionBy;
             }
+            tenant.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, tenant.ActionBy);
 
             _context.Tenants.Update(tenant);
             await _context.SaveChangesAsync();

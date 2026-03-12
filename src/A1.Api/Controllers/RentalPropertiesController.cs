@@ -186,7 +186,7 @@ namespace A1.Api.Controllers
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.PropertyType = rentalProperty.PropertyType;
-            existing.ActionBy = rentalProperty.ActionBy;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, rentalProperty.ActionBy);
             await _repository.UpdateAsync(existing);
             return NoContent();
         }
@@ -217,7 +217,7 @@ namespace A1.Api.Controllers
             rental.IsDeleted = true;
             rental.Action = "DELETE";
             rental.ActionDate = DateTime.UtcNow;
-            rental.ActionBy = actionBy;
+            rental.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);
 
             _context.RentalProperties.Update(rental);
             await _context.SaveChangesAsync();

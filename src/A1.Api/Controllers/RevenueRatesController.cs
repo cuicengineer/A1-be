@@ -187,6 +187,19 @@ namespace A1.Api.Controllers
                 return BadRequest("Revenue rate data is required.");
             }
 
+            var hasActiveRate = await _context.RevenueRates
+                .AsNoTracking()
+                .AnyAsync(r =>
+                    (r.IsDeleted == null || r.IsDeleted == false) &&
+                    r.DeactiveDate == null &&
+                    r.PropertyId == revenueRate.PropertyId &&
+                    r.CmdId == revenueRate.CmdId &&
+                    r.BaseId == revenueRate.BaseId);
+            if (hasActiveRate)
+            {
+                return BadRequest("A rate already exists for this item. Please deactivate the previous rate first.");
+            }
+
             revenueRate.IsDeleted = false;
             revenueRate.RateScope = GetRateScope(revenueRate.CmdId, revenueRate.BaseId);
             revenueRate.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);

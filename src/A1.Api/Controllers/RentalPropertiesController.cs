@@ -145,6 +145,7 @@ namespace A1.Api.Controllers
             }
 
             rentalProperty.IsDeleted = false;
+            rentalProperty.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, rentalProperty.ActionBy);
             await _repository.AddAsync(rentalProperty);
             return CreatedAtAction(nameof(GetById), new { id = rentalProperty.Id }, rentalProperty);
         }

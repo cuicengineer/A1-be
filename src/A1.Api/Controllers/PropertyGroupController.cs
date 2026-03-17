@@ -405,6 +405,7 @@ namespace A1.Api.Controllers
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
+                var actionByWithIp = ActionByHelper.GetActionByWithIp(User, HttpContext, request.ActionBy);
                 // Create PropertyGroup entity from request
                 var propertyGroup = new PropertyGroup
                 {
@@ -419,7 +420,7 @@ namespace A1.Api.Controllers
                     Remarks = request.Remarks,
                     Status = request.Status,
                     IsDeleted = false,
-                    ActionBy = request.ActionBy
+                    ActionBy = actionByWithIp
                 };
 
                 // Save PropertyGroup first
@@ -477,7 +478,7 @@ namespace A1.Api.Controllers
                             IsDeleted = false,
                             ActionDate = now,
                             Action = "CREATE",
-                            ActionBy = request.ActionBy
+                            ActionBy = actionByWithIp
                         });
 
                         totalArea += propArea;
@@ -493,7 +494,7 @@ namespace A1.Api.Controllers
                         // Update PropertyGroup with calculated totals
                         propertyGroup.Area = totalArea;
                         propertyGroup.Rate = totalRate;
-                        propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request.ActionBy);
+                        propertyGroup.ActionBy = actionByWithIp;
                         await _context.SaveChangesAsync();
                     }
                 }

@@ -197,10 +197,24 @@ namespace A1.Api.Controllers
                     // Set common properties for all items
                     foreach (var item in items)
                     {
+                        var hasActiveRate = await _context.SharingFormulas
+                            .AsNoTracking()
+                            .AnyAsync(sf =>
+                                (sf.IsDeleted == null || sf.IsDeleted == false) &&
+                                sf.DeactiveDate == null &&
+                                sf.ClassId == item.ClassId &&
+                                sf.Type == item.Type &&
+                                sf.CmdId == item.CmdId &&
+                                sf.BaseId == item.BaseId);
+                        if (hasActiveRate)
+                        {
+                            return BadRequest("A rate already exists for this item. Please deactivate the previous rate first.");
+                        }
+
                         item.IsDeleted = false;
                         item.ActionDate = now;
                         item.Action = "CREATE";
-                        // ActionBy comes from payload
+                        item.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
                     }
 
                     // Batch insert for memory efficiency
@@ -227,10 +241,24 @@ namespace A1.Api.Controllers
                         return BadRequest("Invalid data format.");
                     }
 
+                    var hasActiveRate = await _context.SharingFormulas
+                        .AsNoTracking()
+                        .AnyAsync(sf =>
+                            (sf.IsDeleted == null || sf.IsDeleted == false) &&
+                            sf.DeactiveDate == null &&
+                            sf.ClassId == item.ClassId &&
+                            sf.Type == item.Type &&
+                            sf.CmdId == item.CmdId &&
+                            sf.BaseId == item.BaseId);
+                    if (hasActiveRate)
+                    {
+                        return BadRequest("A rate already exists for this item. Please deactivate the previous rate first.");
+                    }
+
                     item.IsDeleted = false;
                     item.ActionDate = now;
                     item.Action = "CREATE";
-                    // ActionBy comes from payload
+                    item.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
 
                     await _repository.AddAsync(item);
                     return CreatedAtAction(nameof(GetById), new { id = item.Id }, item);

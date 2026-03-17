@@ -78,7 +78,7 @@ namespace A1.Api.Controllers
             propertyType.IsDeleted = false;
             propertyType.ActionDate = DateTime.UtcNow;
             propertyType.Action = "CREATE";
-            // ActionBy comes from payload
+            propertyType.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, propertyType.ActionBy);
 
             await _repository.AddAsync(propertyType);
             return CreatedAtAction(nameof(GetById), new { id = propertyType.Id }, propertyType);

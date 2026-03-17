@@ -70,6 +70,7 @@ namespace A1.Api.Controllers
 
             // Set IsDeleted = false by default
             tenant.IsDeleted = false;
+            tenant.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, tenant.ActionBy);
             // ActionDate and Action will be set by the repository
 
             await _repository.AddAsync(tenant);

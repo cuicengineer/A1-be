@@ -41,7 +41,7 @@ namespace A1.Api.Controllers
 
             var baseQuery = _context.RentalValueGovtShareRates
                 .AsNoTracking()
-                .Where(r => (r.IsDeleted == null || r.IsDeleted == false) && (r.Status == true));
+                .Where(r => (r.IsDeleted == null || r.IsDeleted == false));
             var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
             baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
 
@@ -91,7 +91,22 @@ namespace A1.Api.Controllers
         {
             if (item == null) return BadRequest("Data is required.");
 
+            var hasActiveRate = await _context.RentalValueGovtShareRates
+                .AsNoTracking()
+                .AnyAsync(r =>
+                    (r.IsDeleted == null || r.IsDeleted == false) &&
+                    r.DeactiveDate == null &&
+                    r.ClassId == item.ClassId &&
+                    r.Type == item.Type &&
+                    r.CmdId == item.CmdId &&
+                    r.BaseId == item.BaseId);
+            if (hasActiveRate)
+            {
+                return BadRequest("A rate already exists for this item. Please deactivate the previous rate first.");
+            }
+
             item.IsDeleted = false;
+            item.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
             await _repository.AddAsync(item);
             return CreatedAtAction(nameof(GetById), new { id = item.Id }, item);
         }

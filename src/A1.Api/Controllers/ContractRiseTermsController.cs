@@ -116,6 +116,7 @@ namespace A1.Api.Controllers
             if (item == null) return BadRequest("Data is required.");
 
             item.IsDeleted = false;
+            item.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
             await _repository.AddAsync(item);
             return CreatedAtAction(nameof(GetById), new { id = item.Id }, item);
         }

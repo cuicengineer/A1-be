@@ -78,7 +78,7 @@ namespace A1.Api.Controllers
             bankList.IsDeleted = false;
             bankList.ActionDate = DateTime.UtcNow;
             bankList.Action = "CREATE";
-            // ActionBy comes from payload
+            bankList.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, bankList.ActionBy);
 
             await _repository.AddAsync(bankList);
             return CreatedAtAction(nameof(GetById), new { id = bankList.Id }, bankList);

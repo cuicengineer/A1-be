@@ -74,6 +74,41 @@ namespace A1.Api.Utilities
         }
 
         /// <summary>
+        /// Normalizes an incoming ActionBy payload by removing any appended IP segment(s).
+        /// This prevents repeated values like "user|ip|ip|ip" when old ActionBy is reused.
+        /// </summary>
+        private static string NormalizeActionByUserPart(ClaimsPrincipal? user, string? userPart)
+        {
+            var fallback = GetActionBy(user);
+            if (string.IsNullOrWhiteSpace(userPart)) return fallback;
+
+            var raw = userPart.Trim();
+            var segments = raw
+                .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+            if (segments.Length == 0) return fallback;
+
+            // Keep only the leading non-IP portion and discard trailing IP segment(s).
+            var kept = new List<string>();
+            foreach (var segment in segments)
+            {
+                if (IsValidIp(segment))
+                {
+                    break;
+                }
+                kept.Add(segment);
+            }
+
+            var normalized = kept.Count > 0 ? string.Join("|", kept) : segments[0];
+            if (string.IsNullOrWhiteSpace(normalized) || IsValidIp(normalized))
+            {
+                return fallback;
+            }
+
+            return normalized;
+        }
+
+        /// <summary>
         /// Returns value to store in ActionBy column: user part (from override or claims) and client IP, e.g. "user|192.168.1.1".
         /// </summary>
         /// <param name="user">Current ClaimsPrincipal.</param>
@@ -81,7 +116,7 @@ namespace A1.Api.Utilities
         /// <param name="userPart">Optional user string from payload; if null, resolved from claims.</param>
         public static string GetActionByWithIp(ClaimsPrincipal? user, HttpContext? context, string? userPart = null)
         {
-            var part = !string.IsNullOrWhiteSpace(userPart) ? userPart.Trim() : GetActionBy(user);
+            var part = NormalizeActionByUserPart(user, userPart);
             var ip = GetClientIp(context);
             return string.IsNullOrEmpty(ip) ? part : $"{part}|{ip}";
         }

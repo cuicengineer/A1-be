@@ -28,6 +28,7 @@ namespace A1.Api.Models
         public DbSet<BankList> BankLists { get; set; }
         public DbSet<PropertyType> PropertyTypes { get; set; }
         public DbSet<AuditLog> AuditLogs { get; set; }
+        public DbSet<UserPermission> UserPermissions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -47,6 +48,14 @@ namespace A1.Api.Models
                 e.Property(x => x.ActionBy).HasMaxLength(150);
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionDateTime).HasPrecision(3);
+            });
+
+            modelBuilder.Entity<UserPermission>(e =>
+            {
+                e.ToTable("UserPermissions", "dbo");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.MenuName).HasMaxLength(100).IsRequired();
+                e.HasIndex(x => new { x.UserId, x.MenuName }).IsUnique();
             });
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())

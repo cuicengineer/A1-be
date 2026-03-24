@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http;
 using System;
 using Microsoft.AspNetCore.Authorization;
+using System.Collections.Generic;
 
 namespace A1.Api.Controllers
 {
@@ -43,6 +44,16 @@ namespace A1.Api.Controllers
             public int? LevelId { get; set; }
             public byte? Status { get; set; }
             public string AccessToken { get; set; } = string.Empty;
+            public List<UserPermissionDto> Permissions { get; set; } = new();
+        }
+
+        public class UserPermissionDto
+        {
+            public string MenuName { get; set; } = string.Empty;
+            public bool CanView { get; set; }
+            public bool CanCreate { get; set; }
+            public bool CanEdit { get; set; }
+            public bool CanDelete { get; set; }
         }
 
         [HttpPost]
@@ -99,6 +110,8 @@ namespace A1.Api.Controllers
 
             SetRefreshTokenCookie(refreshToken, user.RefreshTokenExpiresAt);
 
+            var permissions = await GetUserPermissionsAsync(user.Id);
+
             var response = new LoginResponse
             {
                 UserId = user.Id,
@@ -111,7 +124,8 @@ namespace A1.Api.Controllers
                 CmdId = user.CmdId,
                 LevelId = user.LevelId,
                 Status = user.Status,
-                AccessToken = accessToken
+                AccessToken = accessToken,
+                Permissions = permissions
             };
 
             return Ok(response);
@@ -142,7 +156,24 @@ namespace A1.Api.Controllers
 
             SetRefreshTokenCookie(newRefreshToken, user.RefreshTokenExpiresAt);
 
-            return Ok(new { accessToken = newAccessToken });
+            var permissions = await GetUserPermissionsAsync(user.Id);
+            return Ok(new { accessToken = newAccessToken, permissions });
+        }
+
+        private Task<List<UserPermissionDto>> GetUserPermissionsAsync(int userId)
+        {
+            return _context.UserPermissions
+                .AsNoTracking()
+                .Where(p => p.UserId == userId && (p.IsDeleted == null || p.IsDeleted == false))
+                .Select(p => new UserPermissionDto
+                {
+                    MenuName = p.MenuName,
+                    CanView = p.CanView,
+                    CanCreate = p.CanCreate,
+                    CanEdit = p.CanEdit,
+                    CanDelete = p.CanDelete
+                })
+                .ToListAsync();
         }
 
         private void SetRefreshTokenCookie(string refreshToken, DateTime? expires)

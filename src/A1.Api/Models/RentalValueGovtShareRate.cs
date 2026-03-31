@@ -14,6 +14,7 @@ namespace A1.Api.Models
         public int? BaseId { get; set; }
         public string? Attachments { get; set; }
         public bool? Status { get; set; }
+        public string? Config { get; set; }
     }
 }
 

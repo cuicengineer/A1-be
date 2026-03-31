@@ -7,6 +7,8 @@ namespace A1.Api.Models
         public int GrpId { get; set; }
         public int PropId { get; set; }
         public decimal? Area { get; set; }
+
+        public decimal? Price { get; set; }
         public bool? Status { get; set; }
     }
 }

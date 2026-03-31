@@ -136,7 +136,8 @@ namespace A1.Api.Controllers
                 existing.BaseId,
                 existing.Description,
                 existing.Attachments,
-                existing.Status
+                existing.Status,
+                existing.Config
             });
 
             existing.ClassId = item.ClassId;
@@ -149,6 +150,7 @@ namespace A1.Api.Controllers
             existing.Description = item.Description;
             existing.Attachments = item.Attachments;
             existing.Status = item.Status;
+            existing.Config = item.Config;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);
@@ -166,7 +168,8 @@ namespace A1.Api.Controllers
                 existing.BaseId,
                 existing.Description,
                 existing.Attachments,
-                existing.Status
+                existing.Status,
+                existing.Config
             });
             await _auditLogService.LogAsync(new AuditLog
             {

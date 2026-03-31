@@ -97,6 +97,46 @@ namespace A1.Api.Controllers
                 propertyGroups.Select(x => x.Id),
                 "PropertyGroup", "PropertyGroups");
             var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(propertyGroups, x => x.Id, attachedIds);
+
+            var groupIds = propertyGroups.Select(x => x.Id).ToList();
+            if (groupIds.Count > 0)
+            {
+                var linkedProperties = await (from l in _context.PropertyGroupLinkings
+                                              .AsNoTracking()
+                                              .Where(l => groupIds.Contains(l.GrpId)
+                                                  && (l.IsDeleted == null || l.IsDeleted == false)
+                                                  && (l.Status == null || l.Status == true))
+                                              join rp in _context.RentalProperties
+                                                  .AsNoTracking()
+                                                  .Where(rp => rp.IsDeleted == null || rp.IsDeleted == false)
+                                                  on l.PropId equals rp.Id
+                                              select new { l.GrpId, PropertyName = rp.PId })
+                    .ToListAsync();
+
+                var attachedByGroup = linkedProperties
+                    .GroupBy(x => x.GrpId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => string.Join(", ", g
+                            .Select(x => x.PropertyName)
+                            .Where(x => !string.IsNullOrWhiteSpace(x))
+                            .Distinct()));
+
+                foreach (var row in response)
+                {
+                    if (row.TryGetValue("Id", out var idObj) && idObj != null && int.TryParse(idObj.ToString(), out var grpId))
+                    {
+                        row["attachedproperties"] = attachedByGroup.TryGetValue(grpId, out var names)
+                            ? names
+                            : string.Empty;
+                    }
+                    else
+                    {
+                        row["AttachedProperties"] = string.Empty;
+                    }
+                }
+            }
+
             return Ok(response);
         }
 
@@ -474,6 +514,7 @@ namespace A1.Api.Controllers
                             GrpId = grpId,
                             PropId = propId,
                             Area = propArea, // Store individual property area
+                            Price = propRate, // Store individual property price
                             Status = true,
                             IsDeleted = false,
                             ActionDate = now,
@@ -556,11 +597,13 @@ namespace A1.Api.Controllers
                 .FirstOrDefaultAsync() ?? 0;
 
             var propertyArea = property.Area ?? 0;
+            var effectivePrice = request.Price ?? propertyRate;
 
             var now = DateTime.UtcNow;
 
             // Set individual property area in linking record
             request.Area = propertyArea;
+            request.Price = effectivePrice;
             request.Status ??= true;
             request.IsDeleted = false;
             request.ActionDate = now;
@@ -577,7 +620,7 @@ namespace A1.Api.Controllers
             if (propertyGroup != null)
             {
                 propertyGroup.Area = (propertyGroup.Area ?? 0) + propertyArea;
-                propertyGroup.Rate = (propertyGroup.Rate ?? 0) + propertyRate;
+                propertyGroup.Rate = (propertyGroup.Rate ?? 0) + effectivePrice;
                 propertyGroup.ActionDate = DateTime.UtcNow;
                 propertyGroup.Action = "UPDATE";
                 propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request.ActionBy);
@@ -770,17 +813,8 @@ namespace A1.Api.Controllers
             // Get the property's area from linking record (individual property area)
             var propertyArea = linking.Area ?? 0;
 
-            // Get the property's latest active rate from RevenueRate
-            var propertyRate = await _context.RevenueRates
-                .AsNoTracking()
-                .Where(rr => rr.PropertyId == linking.PropId
-                             && (rr.IsDeleted == null || rr.IsDeleted == false)
-                             && rr.Status == true
-                             && rr.Rate != null)
-                .OrderByDescending(rr => rr.ApplicableDate)
-                .ThenByDescending(rr => rr.Id)
-                .Select(rr => rr.Rate)
-                .FirstOrDefaultAsync() ?? 0;
+            // Use the linking's stored price when deducting group rate.
+            var propertyPrice = linking.Price ?? 0;
 
             // Get the PropertyGroup to update totals
             var propertyGroup = await _context.PropertyGroups
@@ -790,7 +824,7 @@ namespace A1.Api.Controllers
             {
                 // Deduct area and rate from PropertyGroup totals
                 propertyGroup.Area = (propertyGroup.Area ?? 0) - propertyArea;
-                propertyGroup.Rate = (propertyGroup.Rate ?? 0) - propertyRate;
+                propertyGroup.Rate = (propertyGroup.Rate ?? 0) - propertyPrice;
                 
                 // Ensure values don't go negative
                 if (propertyGroup.Area < 0) propertyGroup.Area = 0;

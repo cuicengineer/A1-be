@@ -35,9 +35,31 @@ namespace A1.Api.Controllers
         public async Task<IActionResult> GetAll()
         {
             var tenants = await _context.Tenants
+                .AsNoTracking()
                 .Where(t => t.IsDeleted == null || t.IsDeleted == false)
                 .ToListAsync();
-            return Ok(tenants);
+
+            var tenantNos = tenants
+                .Select(t => t.TenantNo)
+                .Where(tn => !string.IsNullOrWhiteSpace(tn))
+                .Distinct()
+                .ToList();
+
+            var contractCounts = await _context.Contracts
+                .AsNoTracking()
+                .Where(c =>
+                    tenantNos.Contains(c.TenantNo) &&
+                    c.Status &&
+                    (c.IsDeleted == null || c.IsDeleted == false))
+                .GroupBy(c => c.TenantNo)
+                .Select(g => new { TenantNo = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.TenantNo, x => x.Count);
+
+            var result = tenants.Select(t => BuildTenantResponse(
+                t,
+                contractCounts.TryGetValue(t.TenantNo, out var count) ? count : 0));
+
+            return Ok(result);
         }
 
         /// <summary>
@@ -47,6 +69,7 @@ namespace A1.Api.Controllers
         public async Task<IActionResult> GetById(int id)
         {
             var tenant = await _context.Tenants
+                .AsNoTracking()
                 .FirstOrDefaultAsync(t => t.Id == id && (t.IsDeleted == null || t.IsDeleted == false));
 
             if (tenant == null)
@@ -54,7 +77,15 @@ namespace A1.Api.Controllers
                 return NotFound();
             }
 
-            return Ok(tenant);
+            var totalContracts = await _context.Contracts
+                .AsNoTracking()
+                .Where(c =>
+                    c.TenantNo == tenant.TenantNo &&
+                    c.Status &&
+                    (c.IsDeleted == null || c.IsDeleted == false))
+                .CountAsync();
+
+            return Ok(BuildTenantResponse(tenant, totalContracts));
         }
 
         /// <summary>
@@ -162,6 +193,33 @@ namespace A1.Api.Controllers
             await _context.SaveChangesAsync();
 
             return NoContent();
+        }
+
+        private static object BuildTenantResponse(Tenant tenant, int totalContracts)
+        {
+            return new
+            {
+                tenant.Id,
+                tenant.ActionDate,
+                tenant.ActionBy,
+                tenant.Action,
+                tenant.IsDeleted,
+                tenant.TenantNo,
+                tenant.OwnerName,
+                tenant.Prefix,
+                tenant.BusinessName,
+                tenant.Address,
+                tenant.Province,
+                tenant.City,
+                tenant.TelephoneNo,
+                tenant.CellNo,
+                tenant.NTNNo,
+                tenant.GSTNo,
+                tenant.Status,
+                tenant.Remarks,
+                totalContracts,
+                totalInvoices = 0
+            };
         }
     }
 }

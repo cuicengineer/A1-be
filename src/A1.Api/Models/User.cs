@@ -28,6 +28,7 @@ namespace A1.Api.Models
         public DateTime? RefreshTokenExpiresAt { get; set; }
 
         public string? Rank { get; set; }
+        public string? Appoint { get; set; }
         public string? Category { get; set; }
         public int? UnitId { get; set; }
         public int? BaseId { get; set; }

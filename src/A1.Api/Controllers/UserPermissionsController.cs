@@ -3,6 +3,9 @@ using A1.Api.Repositories;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 
 namespace A1.Api.Controllers
 {
@@ -10,13 +13,56 @@ namespace A1.Api.Controllers
     [ApiController]
     public class UserPermissionsController : ControllerBase
     {
+        private static readonly HttpClient _httpClient = new();
         private readonly IGenericRepository<UserPermission> _repository;
         private readonly ApplicationDbContext _context;
+        private readonly IConfiguration _configuration;
 
-        public UserPermissionsController(IGenericRepository<UserPermission> repository, ApplicationDbContext context)
+        public UserPermissionsController(IGenericRepository<UserPermission> repository, ApplicationDbContext context, IConfiguration configuration)
         {
             _repository = repository;
             _context = context;
+            _configuration = configuration;
+        }
+
+        [HttpGet("GetInfo/{pakno}")]
+        public async Task<IActionResult> GetInfo(string pakno)
+        {
+            if (string.IsNullOrWhiteSpace(pakno))
+            {
+                return BadRequest("pakno is required.");
+            }
+
+            var endpoint = _configuration["ExternalApis:GetInfoUrl"];
+            if (string.IsNullOrWhiteSpace(endpoint))
+            {
+                return StatusCode(500, "GetInfo API URL is not configured.");
+            }
+
+            var payload = JsonSerializer.Serialize(new { pakno });
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var response = await _httpClient.PostAsync(endpoint, content);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode((int)response.StatusCode, responseBody);
+            }
+
+            if (string.IsNullOrWhiteSpace(responseBody))
+            {
+                return Ok();
+            }
+
+            try
+            {
+                using var jsonDocument = JsonDocument.Parse(responseBody);
+                return Ok(jsonDocument.RootElement.Clone());
+            }
+            catch (JsonException)
+            {
+                return Content(responseBody, response.Content.Headers.ContentType?.ToString() ?? "text/plain");
+            }
         }
 
         [HttpGet("ByUser/{userId}")]

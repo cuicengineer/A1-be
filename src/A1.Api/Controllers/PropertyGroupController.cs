@@ -481,33 +481,39 @@ namespace A1.Api.Controllers
                         .Select(p => new { p.Id, p.Area })
                         .ToDictionaryAsync(p => p.Id);
 
-                    // Fetch latest active rates for properties
+                    // Latest rate per property: not deleted, active (Status + not deactivated), rate present
                     var propertyIds = validPropIds.ToList();
-                    var latestRates = await _context.RevenueRates
+                    var rateRows = await _context.RevenueRates
                         .AsNoTracking()
                         .Where(rr => propertyIds.Contains(rr.PropertyId)
                                      && (rr.IsDeleted == null || rr.IsDeleted == false)
                                      && rr.Status == true
+                                     && rr.DeactiveDate == null
                                      && rr.Rate != null)
                         .OrderByDescending(rr => rr.ApplicableDate)
                         .ThenByDescending(rr => rr.Id)
-                        .GroupBy(rr => rr.PropertyId)
-                        .Select(g => new { PropertyId = g.Key, Rate = g.First().Rate })
-                        .ToDictionaryAsync(r => r.PropertyId);
+                        .Select(rr => new { rr.PropertyId, rr.Rate })
+                        .ToListAsync();
+
+                    var latestRates = new Dictionary<int, decimal?>();
+                    foreach (var row in rateRows)
+                    {
+                        if (!latestRates.ContainsKey(row.PropertyId))
+                            latestRates[row.PropertyId] = row.Rate;
+                    }
 
                     // Create linking records efficiently in batch with individual property areas
                     var linkingRecords = new List<PropertyGroupLinking>(validPropIds.Count);
                     var now = DateTime.UtcNow;
                     decimal totalArea = 0;
-                    decimal totalRate = 0;
-                    
+
                     foreach (var propId in validPropIds)
                     {
                         if (!properties.TryGetValue(propId, out var prop))
                             continue;
 
                         var propArea = prop.Area ?? 0;
-                        var propRate = latestRates.TryGetValue(propId, out var rate) ? (rate.Rate ?? 0) : 0;
+                        var propRate = latestRates.TryGetValue(propId, out var rate) ? (rate ?? 0) : 0;
 
                         linkingRecords.Add(new PropertyGroupLinking
                         {
@@ -523,7 +529,6 @@ namespace A1.Api.Controllers
                         });
 
                         totalArea += propArea;
-                        totalRate += propRate;
                     }
 
                     // Batch insert for memory efficiency
@@ -534,7 +539,6 @@ namespace A1.Api.Controllers
 
                         // Update PropertyGroup with calculated totals
                         propertyGroup.Area = totalArea;
-                        propertyGroup.Rate = totalRate;
                         propertyGroup.ActionBy = actionByWithIp;
                         await _context.SaveChangesAsync();
                     }
@@ -620,7 +624,12 @@ namespace A1.Api.Controllers
             if (propertyGroup != null)
             {
                 propertyGroup.Area = (propertyGroup.Area ?? 0) + propertyArea;
-                propertyGroup.Rate = (propertyGroup.Rate ?? 0) + effectivePrice;
+                propertyGroup.Rate = await _context.PropertyGroupLinkings
+                    .AsNoTracking()
+                    .Where(l => l.GrpId == request.GrpId
+                        && (l.IsDeleted == null || l.IsDeleted == false)
+                        && (l.Status == null || l.Status == true))
+                    .AverageAsync(l => l.Price ?? 0);
                 propertyGroup.ActionDate = DateTime.UtcNow;
                 propertyGroup.Action = "UPDATE";
                 propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request.ActionBy);
@@ -798,6 +807,16 @@ namespace A1.Api.Controllers
                 return NotFound("PropertyGroupLinking not found.");
             }
 
+            var hasNonDeletedContract = await _context.Contracts
+                .AsNoTracking()
+                .AnyAsync(c => c.GrpId == linking.GrpId
+                    && (c.IsDeleted == null || c.IsDeleted == false));
+
+            if (hasNonDeletedContract)
+            {
+                return Conflict("Cannot delete this linking while the group has a linked contract that is not deleted.");
+            }
+
             var actionBy = request?.ActionBy;
             if (string.IsNullOrWhiteSpace(actionBy))
             {
@@ -813,18 +832,23 @@ namespace A1.Api.Controllers
             // Get the property's area from linking record (individual property area)
             var propertyArea = linking.Area ?? 0;
 
-            // Use the linking's stored price when deducting group rate.
-            var propertyPrice = linking.Price ?? 0;
-
             // Get the PropertyGroup to update totals
             var propertyGroup = await _context.PropertyGroups
                 .FirstOrDefaultAsync(pg => pg.Id == linking.GrpId && (pg.IsDeleted == null || pg.IsDeleted == false));
 
             if (propertyGroup != null)
             {
-                // Deduct area and rate from PropertyGroup totals
+                // Deduct area and refresh group rate from remaining active linkings
                 propertyGroup.Area = (propertyGroup.Area ?? 0) - propertyArea;
-                propertyGroup.Rate = (propertyGroup.Rate ?? 0) - propertyPrice;
+                var remainingPrices = await _context.PropertyGroupLinkings
+                    .AsNoTracking()
+                    .Where(l => l.GrpId == linking.GrpId
+                        && l.Id != linking.Id
+                        && (l.IsDeleted == null || l.IsDeleted == false)
+                        && (l.Status == null || l.Status == true))
+                    .Select(l => l.Price ?? 0)
+                    .ToListAsync();
+                propertyGroup.Rate = remainingPrices.Count > 0 ? remainingPrices.Average() : 0;
                 
                 // Ensure values don't go negative
                 if (propertyGroup.Area < 0) propertyGroup.Area = 0;

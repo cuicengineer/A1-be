@@ -19,6 +19,7 @@ namespace A1.Api.Utilities
                 new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
                 new Claim("name", user.Name ?? string.Empty),
                 new Claim("rank", user.Rank ?? string.Empty),
+                new Claim("category", user.Category ?? string.Empty),
                 new Claim("cmdId", user.CmdId?.ToString() ?? string.Empty),
                 new Claim("baseId", user.BaseId?.ToString() ?? string.Empty),
                 new Claim("unitId", user.UnitId?.ToString() ?? string.Empty),

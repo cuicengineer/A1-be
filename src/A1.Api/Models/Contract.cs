@@ -36,11 +36,13 @@ namespace A1.Api.Models
         public decimal? GroupRate { get; set; }
         public decimal? RentalValueRate { get; set; }
         public decimal? VaArea { get; set; }
+        public decimal? Dpc { get; set; }
+        public string? Signatory { get; set; }
         public bool Status { get; set; }
         public string? userIPAddress { get; set; }
         public string? Remarks { get; set; }
         public string? ProfitRate { get; set; }
-
+        public bool? IsArchive { get; set; }
         [NotMapped]
         public List<ContractRiseTerm>? ContractRiseTerms { get; set; }
     }

@@ -173,12 +173,15 @@ namespace A1.Api.Controllers
                                        c.GroupRate,
                                        c.RentalValueRate,
                                        c.VaArea,
+                                       c.Dpc,
+                                       c.Signatory,
                                        c.Status,
                                        c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
                                        c.Action,
                                        c.IsDeleted,
+                                       c.IsArchive,
                                        c.userIPAddress,
                                        c.Remarks,
                                        c.ProfitRate,
@@ -262,12 +265,15 @@ namespace A1.Api.Controllers
                                        c.GroupRate,
                                        c.RentalValueRate,
                                        c.VaArea,
+                                       c.Dpc,
+                                       c.Signatory,
                                        c.Status,
                                        c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
                                        c.Action,
                                        c.IsDeleted,
+                                       c.IsArchive,
                                        c.userIPAddress,
                                        c.Remarks,
                                        c.ProfitRate,
@@ -289,6 +295,30 @@ namespace A1.Api.Controllers
                 new[] { contract.Id },
                 "Contracts", "Contract");
             return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(contract, attachedIds.Contains(contract.Id)));
+        }
+
+        /// <summary>
+        /// GET: Get contracts by tenant number (returns only active and not deleted records)
+        /// Route: GET /api/Contracts/by-tenant/{tenantNo}
+        /// </summary>
+        [HttpGet("by-tenant/{tenantNo}")]
+        public async Task<IActionResult> GetByTenantNo(string tenantNo)
+        {
+            if (string.IsNullOrWhiteSpace(tenantNo))
+            {
+                return BadRequest("tenantNo is required.");
+            }
+
+            var contracts = await _context.Contracts
+                .AsNoTracking()
+                .Where(c =>
+                    c.TenantNo == tenantNo &&
+                    c.Status == true &&
+                    (c.IsDeleted == null || c.IsDeleted == false))
+                .OrderByDescending(c => c.Id)
+                .ToListAsync();
+
+            return Ok(contracts);
         }
 
         /// <summary>
@@ -396,12 +426,15 @@ namespace A1.Api.Controllers
                                        c.GroupRate,
                                        c.RentalValueRate,
                                        c.VaArea,
+                                       c.Dpc,
+                                       c.Signatory,
                                        c.Status,
                                        c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
                                        c.Action,
                                        c.IsDeleted,
+                                       c.IsArchive,
                                        c.userIPAddress,
                                        c.Remarks,
                                        c.ProfitRate
@@ -473,11 +506,14 @@ namespace A1.Api.Controllers
                 existingContract.GroupRate,
                 existingContract.RentalValueRate,
                 existingContract.VaArea,
+                existingContract.Dpc,
+                existingContract.Signatory,
                 existingContract.Status,
                 existingContract.Term,
                 existingContract.userIPAddress,
                 existingContract.Remarks,
-                existingContract.ProfitRate
+                existingContract.ProfitRate,
+                existingContract.IsArchive
             });
 
             // Update properties efficiently
@@ -510,6 +546,8 @@ namespace A1.Api.Controllers
             existingContract.GroupRate = contract.GroupRate;
             existingContract.RentalValueRate = contract.RentalValueRate;
             existingContract.VaArea = contract.VaArea;
+            existingContract.Dpc = contract.Dpc;
+            existingContract.Signatory = contract.Signatory;
             existingContract.Status = contract.Status;
             existingContract.Term = contract.Term;
             existingContract.ActionDate = DateTime.UtcNow;
@@ -518,6 +556,7 @@ namespace A1.Api.Controllers
             existingContract.userIPAddress = contract.userIPAddress;
             existingContract.Remarks = contract.Remarks;
             existingContract.ProfitRate = contract.ProfitRate;
+            existingContract.IsArchive = contract.IsArchive;
 
             if (contract.ContractRiseTerms != null && contract.ContractRiseTerms.Count > 0)
             {
@@ -592,11 +631,14 @@ namespace A1.Api.Controllers
                 existingContract.GroupRate,
                 existingContract.RentalValueRate,
                 existingContract.VaArea,
+                existingContract.Dpc,
+                existingContract.Signatory,
                 existingContract.Status,
                 existingContract.Term,
                 existingContract.userIPAddress,
                 existingContract.Remarks,
-                existingContract.ProfitRate
+                existingContract.ProfitRate,
+                existingContract.IsArchive
             });
             await _auditLogService.LogAsync(new AuditLog
             {

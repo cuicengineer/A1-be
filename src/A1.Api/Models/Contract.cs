@@ -39,6 +39,8 @@ namespace A1.Api.Models
         public decimal? Dpc { get; set; }
         public string? Signatory { get; set; }
         public bool Status { get; set; }
+        public bool? ApprovalStatus { get; set; }
+        public string? ApprovedBy { get; set; }
         public string? userIPAddress { get; set; }
         public string? Remarks { get; set; }
         public string? ProfitRate { get; set; }

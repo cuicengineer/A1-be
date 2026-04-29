@@ -176,6 +176,8 @@ namespace A1.Api.Controllers
                                        c.Dpc,
                                        c.Signatory,
                                        c.Status,
+                                       c.ApprovalStatus,
+                                       c.ApprovedBy,
                                        c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
@@ -268,6 +270,8 @@ namespace A1.Api.Controllers
                                        c.Dpc,
                                        c.Signatory,
                                        c.Status,
+                                       c.ApprovalStatus,
+                                       c.ApprovedBy,
                                        c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
@@ -429,6 +433,8 @@ namespace A1.Api.Controllers
                                        c.Dpc,
                                        c.Signatory,
                                        c.Status,
+                                       c.ApprovalStatus,
+                                       c.ApprovedBy,
                                        c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
@@ -509,6 +515,8 @@ namespace A1.Api.Controllers
                 existingContract.Dpc,
                 existingContract.Signatory,
                 existingContract.Status,
+                existingContract.ApprovalStatus,
+                existingContract.ApprovedBy,
                 existingContract.Term,
                 existingContract.userIPAddress,
                 existingContract.Remarks,
@@ -549,6 +557,8 @@ namespace A1.Api.Controllers
             existingContract.Dpc = contract.Dpc;
             existingContract.Signatory = contract.Signatory;
             existingContract.Status = contract.Status;
+            existingContract.ApprovalStatus = contract.ApprovalStatus;
+            existingContract.ApprovedBy = contract.ApprovedBy;
             existingContract.Term = contract.Term;
             existingContract.ActionDate = DateTime.UtcNow;
             existingContract.Action = "UPDATE";
@@ -634,6 +644,8 @@ namespace A1.Api.Controllers
                 existingContract.Dpc,
                 existingContract.Signatory,
                 existingContract.Status,
+                existingContract.ApprovalStatus,
+                existingContract.ApprovedBy,
                 existingContract.Term,
                 existingContract.userIPAddress,
                 existingContract.Remarks,

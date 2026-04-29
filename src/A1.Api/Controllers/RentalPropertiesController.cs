@@ -175,6 +175,17 @@ namespace A1.Api.Controllers
                 return NotFound("Rental property not found.");
             }
 
+            var isLinkedToNonDeletedGroup = await _context.PropertyGroupLinkings
+                .AsNoTracking()
+                .AnyAsync(l => l.PropId == id
+                    && (l.IsDeleted == null || l.IsDeleted == false)
+                    && _context.PropertyGroups.Any(g => g.Id == l.GrpId && (g.IsDeleted == null || g.IsDeleted == false)));
+
+            if (isLinkedToNonDeletedGroup)
+            {
+                return Conflict("Cannot update this rental property because it is linked to a property group that is not deleted.");
+            }
+
             existing.CmdId = rentalProperty.CmdId;
             existing.BaseId = rentalProperty.BaseId;
             existing.ClassId = rentalProperty.ClassId;
@@ -201,6 +212,17 @@ namespace A1.Api.Controllers
             if (rental == null)
             {
                 return NotFound("Rental property not found.");
+            }
+
+            var isLinkedToNonDeletedGroup = await _context.PropertyGroupLinkings
+                .AsNoTracking()
+                .AnyAsync(l => l.PropId == id
+                    && (l.IsDeleted == null || l.IsDeleted == false)
+                    && _context.PropertyGroups.Any(g => g.Id == l.GrpId && (g.IsDeleted == null || g.IsDeleted == false)));
+
+            if (isLinkedToNonDeletedGroup)
+            {
+                return Conflict("Cannot delete this rental property because it is linked to a property group that is not deleted.");
             }
 
             var actionBy = request?.ActionBy;

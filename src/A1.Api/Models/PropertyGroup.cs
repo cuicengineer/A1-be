@@ -7,6 +7,7 @@ namespace A1.Api.Models
         public int CmdId { get; set; }
         public int BaseId { get; set; }
         public int ClassId { get; set; }
+        public int? PropertyType { get; set; }
         public string? GId { get; set; }
         public string? UoM { get; set; }
         public decimal? Area { get; set; }

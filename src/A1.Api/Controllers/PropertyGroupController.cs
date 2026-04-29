@@ -76,6 +76,7 @@ namespace A1.Api.Controllers
                                            BaseName = b != null ? b.Name : string.Empty,
                                            ClassId = pg.ClassId,
                                            ClassName = cls != null ? cls.Name : string.Empty,
+                                           pg.PropertyType,
                                            pg.GId,
                                            pg.UoM,
                                            pg.Area,
@@ -172,6 +173,7 @@ namespace A1.Api.Controllers
                                            BaseName = b != null ? b.Name : string.Empty,
                                            ClassId = pg.ClassId,
                                            ClassName = cls != null ? cls.Name : string.Empty,
+                                           pg.PropertyType,
                                            pg.GId,
                                            pg.UoM,
                                            pg.Area,
@@ -452,6 +454,7 @@ namespace A1.Api.Controllers
                     CmdId = request.CmdId,
                     BaseId = request.BaseId,
                     ClassId = request.ClassId,
+                    PropertyType = request.PropertyType,
                     GId = request.GId,
                     UoM = request.UoM,
                     Area = request.Area,
@@ -670,11 +673,21 @@ namespace A1.Api.Controllers
                 return NotFound("PropertyGroup not found.");
             }
 
+            var hasNonDeletedContract = await _context.Contracts
+                .AsNoTracking()
+                .AnyAsync(c => c.GrpId == id && (c.IsDeleted == null || c.IsDeleted == false));
+
+            if (hasNonDeletedContract)
+            {
+                return Conflict("Cannot update this property group because it has a linked contract that is not deleted.");
+            }
+
             var oldValuesJson = JsonSerializer.Serialize(new
             {
                 existingPropertyGroup.CmdId,
                 existingPropertyGroup.BaseId,
                 existingPropertyGroup.ClassId,
+                existingPropertyGroup.PropertyType,
                 existingPropertyGroup.GId,
                 existingPropertyGroup.UoM,
                 existingPropertyGroup.Area,
@@ -688,6 +701,7 @@ namespace A1.Api.Controllers
             existingPropertyGroup.CmdId = propertyGroup.CmdId;
             existingPropertyGroup.BaseId = propertyGroup.BaseId;
             existingPropertyGroup.ClassId = propertyGroup.ClassId;
+            existingPropertyGroup.PropertyType = propertyGroup.PropertyType;
             existingPropertyGroup.GId = propertyGroup.GId;
             existingPropertyGroup.UoM = propertyGroup.UoM;
             existingPropertyGroup.Area = propertyGroup.Area;
@@ -706,6 +720,7 @@ namespace A1.Api.Controllers
                 existingPropertyGroup.CmdId,
                 existingPropertyGroup.BaseId,
                 existingPropertyGroup.ClassId,
+                existingPropertyGroup.PropertyType,
                 existingPropertyGroup.GId,
                 existingPropertyGroup.UoM,
                 existingPropertyGroup.Area,
@@ -739,6 +754,15 @@ namespace A1.Api.Controllers
             if (propertyGroup == null)
             {
                 return NotFound("PropertyGroup not found.");
+            }
+
+            var hasNonDeletedContract = await _context.Contracts
+                .AsNoTracking()
+                .AnyAsync(c => c.GrpId == id && (c.IsDeleted == null || c.IsDeleted == false));
+
+            if (hasNonDeletedContract)
+            {
+                return Conflict("Cannot delete this property group because it has a linked contract that is not deleted.");
             }
 
             var actionBy = request?.ActionBy;

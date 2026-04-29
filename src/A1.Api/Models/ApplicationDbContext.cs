@@ -29,6 +29,7 @@ namespace A1.Api.Models
         public DbSet<PropertyType> PropertyTypes { get; set; }
         public DbSet<AuditLog> AuditLogs { get; set; }
         public DbSet<UserPermission> UserPermissions { get; set; }
+        public DbSet<BankAccount> BankAccounts { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -58,6 +59,21 @@ namespace A1.Api.Models
                 e.HasIndex(x => new { x.UserId, x.MenuName }).IsUnique();
             });
 
+            modelBuilder.Entity<BankAccount>(e =>
+            {
+                e.ToTable("BankAccounts", "dbo");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).ValueGeneratedOnAdd();
+                e.Property(x => x.CmdId).HasColumnName("RAC");
+                e.Property(x => x.BaseId).HasColumnName("Base");
+                e.Property(x => x.OpeningDate).HasColumnType("date");
+                e.Property(x => x.SignatoryDate).HasColumnType("date");
+                e.Property(x => x.StatusDate).HasColumnType("date");
+                e.Property(x => x.IBAN).HasMaxLength(34).IsRequired();
+                e.Property(x => x.Signatory1).HasMaxLength(100).IsRequired();
+                e.Property(x => x.Signatory2).HasMaxLength(100).IsRequired();
+            });
+
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
                 if (typeof(BaseEntity).IsAssignableFrom(entityType.ClrType))
@@ -71,5 +87,5 @@ namespace A1.Api.Models
                 }
             }
         }
-        }
     }
+}

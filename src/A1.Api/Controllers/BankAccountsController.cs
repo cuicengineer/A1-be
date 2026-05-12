@@ -172,6 +172,7 @@ namespace A1.Api.Controllers
             existing.Authority = item.Authority;
             existing.Reference = item.Reference;
             existing.CreatedDate = item.CreatedDate;
+            existing.AccStatus = item.AccStatus;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, item.ActionBy);

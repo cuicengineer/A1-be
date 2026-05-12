@@ -136,6 +136,9 @@ namespace A1.Api.Controllers
                                    join pg in _context.PropertyGroups.Where(pg => pg.IsDeleted == null || pg.IsDeleted == false)
                                        on c.GrpId equals pg.Id into pgGroup
                                    from pg in pgGroup.DefaultIfEmpty()
+                                   join tn in _context.Tenants.Where(tn => tn.IsDeleted == null || tn.IsDeleted == false)
+                                       on c.TenantNo equals tn.TenantNo into tenantGroup
+                                   from tn in tenantGroup.DefaultIfEmpty()
                                    orderby c.Id descending
                                    select new
                                    {
@@ -149,7 +152,11 @@ namespace A1.Api.Controllers
                                        ClassName = cls != null ? cls.Name : string.Empty,
                                        GrpId = c.GrpId,
                                        GrpName = pg != null ? (pg.GId ?? string.Empty) : string.Empty,
-                                       c.TenantNo,
+                                       TenantNo = tn == null
+                                           ? c.TenantNo
+                                           : c.TenantNo
+                                             + (((tn.Prefix ?? "") == "") ? string.Empty : " " + tn.Prefix)
+                                             + (((tn.OwnerName ?? "") == "") ? string.Empty : " " + tn.OwnerName),
                                        c.BusinessName,
                                        c.NatureOfBusiness,
                                        c.ContractStartDate,
@@ -186,6 +193,7 @@ namespace A1.Api.Controllers
                                        c.IsArchive,
                                        c.userIPAddress,
                                        c.Remarks,
+                                       c.Fiscal,
                                        c.ProfitRate,
                                        ContractRiseTerms = _context.ContractRiseTerms
                                             .AsNoTracking()
@@ -280,6 +288,7 @@ namespace A1.Api.Controllers
                                        c.IsArchive,
                                        c.userIPAddress,
                                        c.Remarks,
+                                       c.Fiscal,
                                        c.ProfitRate,
                                        ContractRiseTerms = _context.ContractRiseTerms
                                             .AsNoTracking()
@@ -338,6 +347,10 @@ namespace A1.Api.Controllers
 
             // Set IsDeleted = false by default
             contract.IsDeleted = false;
+            contract.Fiscal = (contract.ContractStartDate.Month >= 6
+                ? $"{contract.ContractStartDate.Year}-{(contract.ContractStartDate.Year + 1).ToString().Substring(2)}"
+                : $"{contract.ContractStartDate.Year - 1}-{contract.ContractStartDate.Year.ToString().Substring(2)}")
+            ;
             contract.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, contract.ActionBy);
             // ActionDate and Action will be set by the repository
             using var tx = await _context.Database.BeginTransactionAsync();
@@ -438,6 +451,7 @@ namespace A1.Api.Controllers
                                        c.Term,
                                        c.ActionDate,
                                        c.ActionBy,
+                                       c.Fiscal,
                                        c.Action,
                                        c.IsDeleted,
                                        c.IsArchive,
@@ -669,7 +683,7 @@ namespace A1.Api.Controllers
         /// DELETE: Soft delete a contract (sets IsDeleted = true)
         /// </summary>
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id, [FromBody] string userIPAddress)
+        public async Task<IActionResult> Delete(int id, [FromBody] ContractDeleteRequest? request = null)
         {
             var contract = await _context.Contracts
                 .FirstOrDefaultAsync(c => c.Id == id && (c.IsDeleted == null || c.IsDeleted == false));
@@ -683,14 +697,20 @@ namespace A1.Api.Controllers
             contract.IsDeleted = true;
             contract.Action = "DELETE";
             contract.ActionDate = DateTime.UtcNow;
-            contract.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext);
-            contract.userIPAddress = userIPAddress;
+            contract.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request?.ActionBy);
+            contract.userIPAddress = request?.userIPAddress;
 
             _context.Contracts.Update(contract);
             await _context.SaveChangesAsync();
 
             return NoContent();
         }
+    }
+
+    public class ContractDeleteRequest
+    {
+        public string? ActionBy { get; set; }
+        public string? userIPAddress { get; set; }
     }
 }
 

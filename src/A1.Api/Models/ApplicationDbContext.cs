@@ -30,6 +30,7 @@ namespace A1.Api.Models
         public DbSet<AuditLog> AuditLogs { get; set; }
         public DbSet<UserPermission> UserPermissions { get; set; }
         public DbSet<BankAccount> BankAccounts { get; set; }
+        public DbSet<AccRacBase> AccRacBases { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -57,6 +58,15 @@ namespace A1.Api.Models
                 e.HasKey(x => x.Id);
                 e.Property(x => x.MenuName).HasMaxLength(100).IsRequired();
                 e.HasIndex(x => new { x.UserId, x.MenuName }).IsUnique();
+            });
+
+            modelBuilder.Entity<AccRacBase>(e =>
+            {
+                e.ToTable("AccRacBase", "dbo");
+                e.Property(x => x.Name).HasColumnName("NAME").HasMaxLength(50);
+                e.Property(x => x.Type).HasColumnName("Type").HasMaxLength(10).IsRequired();
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(50);
             });
 
             modelBuilder.Entity<BankAccount>(e =>

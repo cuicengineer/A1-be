@@ -47,59 +47,61 @@ namespace A1.Api.Controllers
                 .AsNoTracking()
                 .Where(r => r.IsDeleted == null || r.IsDeleted == false);
 
-            var totalCount = await baseQuery.CountAsync();
+            var dtoQuery =
+                from r in baseQuery
+                join p in _context.RentalProperties.Where(p => p.IsDeleted == null || p.IsDeleted == false)
+                    on r.PropertyId equals p.Id
+                where scope.IsAhq
+                      || (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase)
+                          && scope.BaseId.HasValue && p.BaseId == scope.BaseId.Value)
+                      || (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase)
+                          && scope.CmdId.HasValue
+                          && p.CmdId == scope.CmdId.Value
+                          && ((scope.BaseId.HasValue && p.BaseId == scope.BaseId.Value)
+                              || (!scope.BaseId.HasValue && scope.AllowedBaseIds.Contains(p.BaseId))))
+                join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
+                    on p.CmdId equals cmd.Id into cmdGroup
+                from cmd in cmdGroup.DefaultIfEmpty()
+                join b in _context.Bases.Where(b => b.IsDeleted == null || b.IsDeleted == false)
+                    on p.BaseId equals b.Id into baseGroup
+                from b in baseGroup.DefaultIfEmpty()
+                join cls in _context.Classes.Where(cls => cls.IsDeleted == null || cls.IsDeleted == false)
+                    on p.ClassId equals cls.Id into classGroup
+                from cls in classGroup.DefaultIfEmpty()
+                select new RevenueRateDto
+                {
+                    Id = r.Id,
+                    PropertyId = r.PropertyId,
+                    CmdId = r.CmdId ?? p.CmdId,
+                    CmdName = cmd != null ? cmd.Name : string.Empty,
+                    BaseId = r.BaseId ?? p.BaseId,
+                    BaseName = b != null ? b.Name : string.Empty,
+                    ClassId = p.ClassId,
+                    ClassName = cls != null ? cls.Name : string.Empty,
+                    PropertyIdentifier = p.PId,
+                    UoM = p.UoM,
+                    Area = p.Area,
+                    Location = p.Location,
+                    Remarks = p.Remarks,
+                    ApplicableDate = r.ApplicableDate,
+                    Fiscal = r.Fiscal,
+                    DeactiveDate = r.DeactiveDate,
+                    Rate = r.Rate,
+                    Attachments = r.Attachments,
+                    Status = r.Status,
+                    ActionDate = r.ActionDate,
+                    ActionBy = r.ActionBy,
+                    Action = r.Action,
+                    IsDeleted = r.IsDeleted
+                };
+
+            var totalCount = await dtoQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
             Response.Headers["X-Page-Size"] = pageSize.ToString();
 
-            var payload = await (from r in baseQuery
-                                 join p in _context.RentalProperties.Where(p => p.IsDeleted == null || p.IsDeleted == false)
-                                     on r.PropertyId equals p.Id into propertyGroup
-                                 from p in propertyGroup.DefaultIfEmpty()
-                                 where scope.IsAhq
-                                       || (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase)
-                                           && scope.BaseId.HasValue && p != null && p.BaseId == scope.BaseId.Value)
-                                       || (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase)
-                                           && scope.CmdId.HasValue
-                                           && p != null
-                                           && p.CmdId == scope.CmdId.Value
-                                           && ((scope.BaseId.HasValue && p.BaseId == scope.BaseId.Value)
-                                               || (!scope.BaseId.HasValue && scope.AllowedBaseIds.Contains(p.BaseId))))
-                                 join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
-                                     on p.CmdId equals cmd.Id into cmdGroup
-                                 from cmd in cmdGroup.DefaultIfEmpty()
-                                 join b in _context.Bases.Where(b => b.IsDeleted == null || b.IsDeleted == false)
-                                     on p.BaseId equals b.Id into baseGroup
-                                 from b in baseGroup.DefaultIfEmpty()
-                                 join cls in _context.Classes.Where(cls => cls.IsDeleted == null || cls.IsDeleted == false)
-                                     on p.ClassId equals cls.Id into classGroup
-                                 from cls in classGroup.DefaultIfEmpty()
-                                 orderby r.Id descending
-                                 select new RevenueRateDto
-                                 {
-                                     Id = r.Id,
-                                     PropertyId = r.PropertyId,
-                                     CmdId = r.CmdId ?? (p != null ? p.CmdId : (int?)null),
-                                     CmdName = cmd != null ? cmd.Name : string.Empty,
-                                     BaseId = r.BaseId ?? (p != null ? p.BaseId : (int?)null),
-                                     BaseName = b != null ? b.Name : string.Empty,
-                                     ClassId = p != null ? p.ClassId : (int?)null,
-                                     ClassName = cls != null ? cls.Name : string.Empty,
-                                     PropertyIdentifier = p != null ? p.PId : null,
-                                     UoM = p != null ? p.UoM : null,
-                                     Area = p != null ? p.Area : null,
-                                     Location = p != null ? p.Location : null,
-                                     Remarks = p != null ? p.Remarks : null,
-                                     ApplicableDate = r.ApplicableDate,
-                                     DeactiveDate = r.DeactiveDate,
-                                     Rate = r.Rate,
-                                     Attachments = r.Attachments,
-                                     Status = r.Status,
-                                     ActionDate = r.ActionDate,
-                                     ActionBy = r.ActionBy,
-                                     Action = r.Action,
-                                     IsDeleted = r.IsDeleted
-                                 })
+            var payload = await dtoQuery
+                .OrderByDescending(x => x.Id)
                 .Skip((pageNumber - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync();
@@ -156,6 +158,7 @@ namespace A1.Api.Controllers
                                         Location = p != null ? p.Location : null,
                                         Remarks = p != null ? p.Remarks : null,
                                         ApplicableDate = r.ApplicableDate,
+                                        Fiscal = r.Fiscal,
                                         DeactiveDate = r.DeactiveDate,
                                         Rate = r.Rate,
                                         Attachments = r.Attachments,
@@ -201,6 +204,11 @@ namespace A1.Api.Controllers
             }
 
             revenueRate.IsDeleted = false;
+            revenueRate.Fiscal = revenueRate.ApplicableDate.HasValue
+            ? (revenueRate.ApplicableDate.Value.Month >= 6
+                  ? $"{revenueRate.ApplicableDate.Value.Year}-{(revenueRate.ApplicableDate.Value.Year + 1).ToString().Substring(2)}"
+                  : $"{revenueRate.ApplicableDate.Value.Year - 1}-{revenueRate.ApplicableDate.Value.Year.ToString().Substring(2)}")
+                : null;
             revenueRate.RateScope = GetRateScope(revenueRate.CmdId, revenueRate.BaseId);
             revenueRate.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);
             await _repository.AddAsync(revenueRate);
@@ -253,6 +261,11 @@ namespace A1.Api.Controllers
             existing.Rate = revenueRate.Rate;
             existing.Attachments = revenueRate.Attachments;
             existing.Status = revenueRate.Status;
+            existing.Fiscal = existing.ApplicableDate.HasValue
+            ? (existing.ApplicableDate.Value.Month >= 6
+                ? $"{existing.ApplicableDate.Value.Year}-{existing.ApplicableDate.Value.Year + 1}"
+                : $"{existing.ApplicableDate.Value.Year - 1}-{existing.ApplicableDate.Value.Year}")
+            : null;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);

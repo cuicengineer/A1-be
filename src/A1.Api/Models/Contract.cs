@@ -45,6 +45,7 @@ namespace A1.Api.Models
         public string? Remarks { get; set; }
         public string? ProfitRate { get; set; }
         public bool? IsArchive { get; set; }
+        public string? Fiscal { get; set; }
         [NotMapped]
         public List<ContractRiseTerm>? ContractRiseTerms { get; set; }
     }

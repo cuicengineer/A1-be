@@ -68,6 +68,8 @@ namespace A1.Api.Models
 
         public DateTime? CreatedDate { get; set; }
 
+         public string? AccStatus { get; set; }
+
         [NotMapped]
         public string? CmdName { get; set; }
 

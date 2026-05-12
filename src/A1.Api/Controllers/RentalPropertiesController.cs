@@ -4,6 +4,8 @@ using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 namespace A1.Api.Controllers
 {
@@ -181,7 +183,7 @@ namespace A1.Api.Controllers
                     && (l.IsDeleted == null || l.IsDeleted == false)
                     && _context.PropertyGroups.Any(g => g.Id == l.GrpId && (g.IsDeleted == null || g.IsDeleted == false)));
 
-            if (isLinkedToNonDeletedGroup)
+            if (isLinkedToNonDeletedGroup && !IsLoginSuperuser(User))
             {
                 return Conflict("Cannot update this rental property because it is linked to a property group that is not deleted.");
             }
@@ -203,6 +205,14 @@ namespace A1.Api.Controllers
             return NoContent();
         }
 
+        private static bool IsLoginSuperuser(ClaimsPrincipal user)
+        {
+            var loginName = user.FindFirstValue(JwtRegisteredClaimNames.UniqueName)
+                ?? user.FindFirstValue(ClaimTypes.Name)
+                ?? user.Identity?.Name;
+            return string.Equals(loginName?.Trim(), "superuser", StringComparison.OrdinalIgnoreCase);
+        }
+
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id, [FromBody] RentalPropertyDeleteRequest? request = null)
         {
@@ -220,7 +230,7 @@ namespace A1.Api.Controllers
                     && (l.IsDeleted == null || l.IsDeleted == false)
                     && _context.PropertyGroups.Any(g => g.Id == l.GrpId && (g.IsDeleted == null || g.IsDeleted == false)));
 
-            if (isLinkedToNonDeletedGroup)
+            if (isLinkedToNonDeletedGroup && !IsLoginSuperuser(User))
             {
                 return Conflict("Cannot delete this rental property because it is linked to a property group that is not deleted.");
             }

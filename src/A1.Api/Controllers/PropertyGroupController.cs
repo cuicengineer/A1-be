@@ -4,6 +4,7 @@ using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text.Json;
 
@@ -280,10 +281,10 @@ namespace A1.Api.Controllers
         /// <summary>
         /// GET: Returns rental properties for a given cmdId/baseId that are not linked in any active group
         /// and also not part of any active contract.
-        /// Route: /api/PropertyGroup/NotGroupedProperties?cmdId=1&baseId=1
+        /// Route: /api/PropertyGroup/NotGroupedProperties?cmdId=1&baseId=1&classId=4 (classId optional)
         /// </summary>
         [HttpGet("NotGroupedProperties")]
-        public async Task<IActionResult> NotGroupedProperties([FromQuery] int cmdId, [FromQuery] int baseId)
+        public async Task<IActionResult> NotGroupedProperties([FromQuery] int cmdId, [FromQuery] int baseId, [FromQuery] int? classId = null)
         {
             if (cmdId <= 0 || baseId <= 0)
             {
@@ -346,11 +347,12 @@ namespace A1.Api.Controllers
             var excludedPropertyIds = linkedPropertyIds.Union(contractedPropertyIds);
 
             // Step 1: Return only available properties for requested cmd/base.
-            var availableProperties = await (from r in _context.RentalProperties.AsNoTracking()
+            var availableProperties = await (from r in _context.RentalProperties.AsNoTracking().IgnoreQueryFilters()
                                              where (r.IsDeleted == null || r.IsDeleted == false)
                                                    && r.Status == true
                                                    && r.CmdId == cmdId
                                                    && r.BaseId == baseId
+                                                   && (!classId.HasValue || classId.Value <= 0 || r.ClassId == classId.Value)
                                                    && !excludedPropertyIds.Contains(r.Id)
                                              join cls in _context.Classes.AsNoTracking()
                                                  on r.ClassId equals cls.Id into clsGroup
@@ -403,6 +405,8 @@ namespace A1.Api.Controllers
                     applicableDateByPropertyId[row.PropertyId] = row.ApplicableDate;
                 }
             }
+
+            availableProperties = availableProperties.Where(p => rateByPropertyId.ContainsKey(p.Id)).ToList();
 
             var response = availableProperties.Select(p => new
             {
@@ -677,7 +681,7 @@ namespace A1.Api.Controllers
                 .AsNoTracking()
                 .AnyAsync(c => c.GrpId == id && (c.IsDeleted == null || c.IsDeleted == false));
 
-            if (hasNonDeletedContract)
+            if (hasNonDeletedContract && !IsLoginSuperuser(User))
             {
                 return Conflict("Cannot update this property group because it has a linked contract that is not deleted.");
             }
@@ -895,6 +899,14 @@ namespace A1.Api.Controllers
             await _context.SaveChangesAsync();
 
             return NoContent();
+        }
+
+        private static bool IsLoginSuperuser(ClaimsPrincipal user)
+        {
+            var loginName = user.FindFirstValue(JwtRegisteredClaimNames.UniqueName)
+                ?? user.FindFirstValue(ClaimTypes.Name)
+                ?? user.Identity?.Name;
+            return string.Equals(loginName?.Trim(), "superuser", StringComparison.OrdinalIgnoreCase);
         }
     }
 

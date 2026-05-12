@@ -99,6 +99,22 @@ namespace A1.Api.Controllers
                 return BadRequest("Tenant data is required.");
             }
 
+            var tenantNo = tenant.TenantNo;
+            var activeWithSameNo = await _context.Tenants.IgnoreQueryFilters()
+                .AnyAsync(t => t.TenantNo == tenantNo && (t.IsDeleted == null || t.IsDeleted == false));
+            if (activeWithSameNo)
+            {
+                return Conflict("A tenant with this TenantNo already exists.");
+            }
+
+            var deletedWithSameNo = await _context.Tenants.IgnoreQueryFilters()
+                .FirstOrDefaultAsync(t => t.TenantNo == tenantNo && t.IsDeleted == true);
+            if (deletedWithSameNo != null)
+            {
+                deletedWithSameNo.TenantNo = $"{tenantNo}~{deletedWithSameNo.Id}";
+                await _context.SaveChangesAsync();
+            }
+
             // Set IsDeleted = false by default
             tenant.IsDeleted = false;
             tenant.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, tenant.ActionBy);

@@ -13,5 +13,7 @@ namespace A1.Api.Models
         public decimal? Rate { get; set; }
         public string? Attachments { get; set; }
         public bool? Status { get; set; }
+        public string? Fiscal { get; set; }
+        
     }
 }

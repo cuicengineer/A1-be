@@ -46,7 +46,7 @@ namespace A1.Api.Controllers
         {
             if (pageNumber <= 0) pageNumber = 1;
             if (pageSize <= 0) pageSize = 50;
-            if (pageSize > 200) pageSize = 200; // safety cap for high-load scenarios
+
 
             var baseQuery = _context.SharingFormulas
                 .AsNoTracking()

@@ -32,6 +32,9 @@ namespace A1.Api.Models
         public DbSet<BankAccount> BankAccounts { get; set; }
         public DbSet<AccRacBase> AccRacBases { get; set; }
 
+        public DbSet<LockDate> LockDates { get; set; }
+        public DbSet<ContractInvoicesEdit> ContractInvoicesEdits { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -67,6 +70,33 @@ namespace A1.Api.Models
                 e.Property(x => x.Type).HasColumnName("Type").HasMaxLength(10).IsRequired();
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(50);
+            });
+
+            modelBuilder.Entity<LockDate>(e =>
+            {
+                e.ToTable("LockDate", "dbo");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).ValueGeneratedOnAdd();
+                e.Property(x => x.LockingDate).HasColumnName("LockingDate").HasColumnType("date");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(50);
+            });
+
+            modelBuilder.Entity<ContractInvoicesEdit>(e =>
+            {
+                e.ToTable("ContractInvoicesEdit", "dbo");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).ValueGeneratedOnAdd();
+                e.Property(x => x.ContractNo).HasMaxLength(50).IsRequired();
+                e.Property(x => x.InvoiceNo).HasMaxLength(50).IsRequired();
+                e.Property(x => x.PeriodStart).HasColumnType("date");
+                e.Property(x => x.PeriodEnd).HasColumnType("date");
+                e.Property(x => x.DueDate).HasColumnType("date");
+                e.Property(x => x.ContractStartDate).HasColumnType("date");
+                e.Property(x => x.ContractEndDate).HasColumnType("date");
+                e.Property(x => x.RiseDate).HasColumnType("date");
+                e.Property(x => x.CreatedAt).HasColumnType("datetime");
+                e.HasIndex(x => new { x.ContractNo, x.InvoiceNo });
             });
 
             modelBuilder.Entity<BankAccount>(e =>

@@ -1,7 +1,0 @@
-ALTER TABLE Users
-ADD CONSTRAINT DF_Users_Iterations
-DEFAULT 150000 FOR PasswordIterations;
-
-
-
-added Term nchar(10) Column in contracts table.

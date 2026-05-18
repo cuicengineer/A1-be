@@ -89,6 +89,7 @@ namespace A1.Api.Models
                 e.Property(x => x.Id).ValueGeneratedOnAdd();
                 e.Property(x => x.ContractNo).HasMaxLength(50).IsRequired();
                 e.Property(x => x.InvoiceNo).HasMaxLength(50).IsRequired();
+                e.Property(x => x.SubInvoiceNo).HasMaxLength(50);
                 e.Property(x => x.PeriodStart).HasColumnType("date");
                 e.Property(x => x.PeriodEnd).HasColumnType("date");
                 e.Property(x => x.DueDate).HasColumnType("date");
@@ -96,7 +97,7 @@ namespace A1.Api.Models
                 e.Property(x => x.ContractEndDate).HasColumnType("date");
                 e.Property(x => x.RiseDate).HasColumnType("date");
                 e.Property(x => x.CreatedAt).HasColumnType("datetime");
-                e.HasIndex(x => new { x.ContractNo, x.InvoiceNo });
+                e.HasIndex(x => new { x.ContractNo, x.InvoiceNo, x.SubInvoiceNo });
             });
 
             modelBuilder.Entity<BankAccount>(e =>
@@ -116,6 +117,11 @@ namespace A1.Api.Models
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
+                if (entityType.ClrType == typeof(ContractInvoicesEdit))
+                {
+                    continue;
+                }
+
                 if (typeof(BaseEntity).IsAssignableFrom(entityType.ClrType))
                 {
                     var parameter = Expression.Parameter(entityType.ClrType, "e");

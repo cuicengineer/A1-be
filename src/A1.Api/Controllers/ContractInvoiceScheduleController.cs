@@ -9,8 +9,6 @@ namespace A1.Api.Controllers
 {
     /// <summary>
     /// Contract invoice schedule (dbo.sp_GetContractInvoiceSchedule) and edits (dbo.ContractInvoicesEdit).
-    /// GET — optional filters; result rows returned as-is from the procedure.
-    /// PUT — update invoice row by contractNo and invoiceNo.
     /// </summary>
     [Route("api/[controller]")]
     [ApiController]
@@ -140,18 +138,83 @@ namespace A1.Api.Controllers
         }
 
         /// <summary>
-        /// PUT: Upsert by ContractNo and InvoiceNo — update if exists, otherwise create.
-        /// Route: PUT /api/ContractInvoiceSchedule/{contractNo}/{invoiceNo}
+        /// GET: All non-deleted invoice edits for an InvoiceNo.
+        /// Route: GET /api/ContractInvoiceSchedule/by-invoice/{invoiceNo}
         /// </summary>
-        [HttpPut("{contractNo}/{invoiceNo}")]
-        public async Task<IActionResult> Update(
+        [HttpGet("by-invoice/{invoiceNo}")]
+        public async Task<IActionResult> GetByInvoiceNo(string invoiceNo)
+        {
+            if (string.IsNullOrWhiteSpace(invoiceNo))
+            {
+                return BadRequest("invoiceNo is required.");
+            }
+
+            invoiceNo = invoiceNo.Trim();
+
+            var items = await _context.ContractInvoicesEdits
+                .AsNoTracking()
+                .Where(x =>
+                    (x.InvoiceNo ?? string.Empty) == invoiceNo
+                    && x.SubInvoiceNo != null
+                    && (x.IsDeleted == null || x.IsDeleted == false))
+                .OrderByDescending(x => x.Id)
+                .Select(x => new ContractInvoicesEdit
+                {
+                    Id = x.Id,
+                    ActionDate = x.ActionDate,
+                    ActionBy = x.ActionBy,
+                    Action = x.Action,
+                    IsDeleted = x.IsDeleted,
+                    ContractId = x.ContractId,
+                    ContractNo = x.ContractNo ?? string.Empty,
+                    InvoiceNo = x.InvoiceNo ?? string.Empty,
+                    SubInvoiceNo = x.SubInvoiceNo ?? string.Empty,
+                    PeriodStart = x.PeriodStart,
+                    PeriodEnd = x.PeriodEnd,
+                    DueDate = x.DueDate,
+                    Months = x.Months,
+                    CalculatedRentPM = x.CalculatedRentPM,
+                    TotalRent = x.TotalRent,
+                    Remarks = x.Remarks,
+                    ContractStartDate = x.ContractStartDate,
+                    ContractEndDate = x.ContractEndDate,
+                    ContractPeriod = x.ContractPeriod,
+                    BusinessName = x.BusinessName,
+                    InitialRentPM = x.InitialRentPM,
+                    PaymentTermMonths = x.PaymentTermMonths,
+                    RiseTermType = x.RiseTermType,
+                    RiseTerm = x.RiseTerm,
+                    RiseRate = x.RiseRate,
+                    RiseDate = x.RiseDate,
+                    InvoiceDateType = x.InvoiceDateType,
+                    CmdId = x.CmdId,
+                    BaseId = x.BaseId,
+                    ClassId = x.ClassId,
+                    AmountReceived = x.AmountReceived,
+                    AmountReceivable = x.AmountReceivable,
+                    AmountPending = x.AmountPending,
+                    InvoiceStatus = x.InvoiceStatus,
+                    CreatedAt = x.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(items);
+        }
+
+        /// <summary>
+        /// POST: Create invoice edit row. Fails if ContractNo + InvoiceNo + SubInvoiceNo already exists.
+        /// Route: POST /api/ContractInvoiceSchedule/{contractNo}/{invoiceNo}/{subInvoiceNo}
+        /// </summary>
+        [HttpPost("{contractNo}/{invoiceNo}/{subInvoiceNo}")]
+        public async Task<IActionResult> Create(
             string contractNo,
             string invoiceNo,
+            string subInvoiceNo,
             [FromBody] ContractInvoicesEdit model)
         {
-            if (string.IsNullOrWhiteSpace(contractNo) || string.IsNullOrWhiteSpace(invoiceNo))
+            if (!TryNormalizeKeys(contractNo, invoiceNo, subInvoiceNo, out contractNo, out invoiceNo, out subInvoiceNo, out var keyError))
             {
-                return BadRequest("contractNo and invoiceNo are required.");
+                return BadRequest(keyError);
             }
 
             if (model == null)
@@ -159,54 +222,31 @@ namespace A1.Api.Controllers
                 return BadRequest("Invoice data is required.");
             }
 
-            contractNo = contractNo.Trim();
-            invoiceNo = invoiceNo.Trim();
-
-            var existing = await _context.ContractInvoicesEdits
-                .FirstOrDefaultAsync(x => x.ContractNo == contractNo && x.InvoiceNo == invoiceNo);
-
-            if (await IsPeriodEndLockedAsync(model.PeriodEnd))
+            var invoiceDate = model.DueDate ?? model.PeriodEnd;
+            if (await IsInvoiceDateLockedAsync(invoiceDate))
             {
                 return BadRequest("Date Locked");
             }
 
-            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
-            if (!scope.IsAhq)
+            var existing = await FindEditAsync(contractNo, invoiceNo, subInvoiceNo);
+            if (existing != null && (existing.IsDeleted == null || existing.IsDeleted == false))
             {
-                var cmdId = model.CmdId ?? existing?.CmdId;
-                var baseId = model.BaseId ?? existing?.BaseId;
+                return Conflict("An invoice edit with this contractNo, invoiceNo, and subInvoiceNo already exists.");
+            }
 
-                if (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!scope.BaseId.HasValue || (baseId.HasValue && baseId.Value != scope.BaseId.Value))
-                    {
-                        return Forbid();
-                    }
-                }
-                else if (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!scope.CmdId.HasValue || (cmdId.HasValue && cmdId.Value != scope.CmdId.Value))
-                    {
-                        return Forbid();
-                    }
-
-                    if (scope.BaseId.HasValue)
-                    {
-                        if (baseId.HasValue && baseId.Value != scope.BaseId.Value)
-                        {
-                            return Forbid();
-                        }
-                    }
-                    else if (baseId.HasValue && !scope.AllowedBaseIds.Contains(baseId.Value))
-                    {
-                        return Forbid();
-                    }
-                }
+            var scopeError = await ValidateScopeAsync(model, existing);
+            if (scopeError != null)
+            {
+                return scopeError;
             }
 
             if (existing != null)
             {
-                ApplyInvoiceModel(existing, model);
+                existing.IsDeleted = false;
+                existing.ContractNo = contractNo;
+                existing.InvoiceNo = invoiceNo;
+                existing.SubInvoiceNo = subInvoiceNo;
+                ApplyInvoiceModel(existing, model, isCreate: true);
                 await _context.SaveChangesAsync();
                 return Ok(existing);
             }
@@ -215,19 +255,187 @@ namespace A1.Api.Controllers
             {
                 ContractNo = contractNo,
                 InvoiceNo = invoiceNo,
+                SubInvoiceNo = subInvoiceNo,
                 CreatedAt = DateTime.UtcNow
             };
-            ApplyInvoiceModel(created, model);
+            ApplyInvoiceModel(created, model, isCreate: true);
             await _context.ContractInvoicesEdits.AddAsync(created);
             await _context.SaveChangesAsync();
-            return CreatedAtAction(nameof(Update), new { contractNo, invoiceNo }, created);
+            return CreatedAtAction(nameof(GetByInvoiceNo), new { invoiceNo }, created);
         }
 
-        private async Task<bool> IsPeriodEndLockedAsync(DateTime periodEnd)
+        /// <summary>
+        /// PUT: Upsert by ContractNo, InvoiceNo, and SubInvoiceNo — update if exists, otherwise create.
+        /// Route: PUT /api/ContractInvoiceSchedule/{contractNo}/{invoiceNo}/{subInvoiceNo}
+        /// </summary>
+        [HttpPut("{contractNo}/{invoiceNo}/{subInvoiceNo}")]
+        public async Task<IActionResult> Update(
+            string contractNo,
+            string invoiceNo,
+            string subInvoiceNo,
+            [FromBody] ContractInvoicesEdit model)
         {
-            if (periodEnd == default)
+            if (!TryNormalizeKeys(contractNo, invoiceNo, subInvoiceNo, out contractNo, out invoiceNo, out subInvoiceNo, out var keyError))
             {
+                return BadRequest(keyError);
+            }
+
+            if (model == null)
+            {
+                return BadRequest("Invoice data is required.");
+            }
+
+            var existing = await FindEditAsync(contractNo, invoiceNo, subInvoiceNo);
+
+            var invoiceDate = model.DueDate ?? model.PeriodEnd;
+            if (await IsInvoiceDateLockedAsync(invoiceDate))
+            {
+                return BadRequest("Date Locked");
+            }
+
+            var scopeError = await ValidateScopeAsync(model, existing);
+            if (scopeError != null)
+            {
+                return scopeError;
+            }
+
+            if (existing != null)
+            {
+                existing.ContractNo = contractNo;
+                existing.InvoiceNo = invoiceNo;
+                existing.SubInvoiceNo = subInvoiceNo;
+                ApplyInvoiceModel(existing, model, isCreate: false);
+                await _context.SaveChangesAsync();
+                return Ok(existing);
+            }
+
+            var created = new ContractInvoicesEdit
+            {
+                ContractNo = contractNo,
+                InvoiceNo = invoiceNo,
+                SubInvoiceNo = subInvoiceNo,
+                CreatedAt = DateTime.UtcNow
+            };
+            ApplyInvoiceModel(created, model, isCreate: true);
+            await _context.ContractInvoicesEdits.AddAsync(created);
+            await _context.SaveChangesAsync();
+            return CreatedAtAction(nameof(GetByInvoiceNo), new { invoiceNo }, created);
+        }
+
+        /// <summary>
+        /// DELETE: Soft delete by ContractNo, InvoiceNo, and SubInvoiceNo.
+        /// Route: DELETE /api/ContractInvoiceSchedule/{contractNo}/{invoiceNo}/{subInvoiceNo}
+        /// </summary>
+        [HttpDelete("{contractNo}/{invoiceNo}/{subInvoiceNo}")]
+        public async Task<IActionResult> Delete(
+            string contractNo,
+            string invoiceNo,
+            string subInvoiceNo)
+        {
+            if (!TryNormalizeKeys(contractNo, invoiceNo, subInvoiceNo, out contractNo, out invoiceNo, out subInvoiceNo, out var keyError))
+            {
+                return BadRequest(keyError);
+            }
+
+            var existing = await FindEditAsync(contractNo, invoiceNo, subInvoiceNo);
+            if (existing == null || existing.IsDeleted == true)
+            {
+                return NotFound("Invoice edit not found.");
+            }
+
+            existing.IsDeleted = true;
+            existing.Action = "DELETE";
+            existing.ActionDate = DateTime.UtcNow;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
+
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        private async Task<ContractInvoicesEdit?> FindEditAsync(string contractNo, string invoiceNo, string subInvoiceNo)
+        {
+            return await _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && (x.SubInvoiceNo ?? string.Empty) == subInvoiceNo);
+        }
+
+        private static bool TryNormalizeKeys(
+            string contractNo,
+            string invoiceNo,
+            string subInvoiceNo,
+            out string normalizedContractNo,
+            out string normalizedInvoiceNo,
+            out string normalizedSubInvoiceNo,
+            out string error)
+        {
+            normalizedContractNo = contractNo.Trim();
+            normalizedInvoiceNo = invoiceNo.Trim();
+            normalizedSubInvoiceNo = subInvoiceNo.Trim();
+            error = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(normalizedContractNo)
+                || string.IsNullOrWhiteSpace(normalizedInvoiceNo)
+                || string.IsNullOrWhiteSpace(normalizedSubInvoiceNo))
+            {
+                error = "contractNo, invoiceNo, and subInvoiceNo are required.";
                 return false;
+            }
+
+            return true;
+        }
+
+        private async Task<IActionResult?> ValidateScopeAsync(ContractInvoicesEdit model, ContractInvoicesEdit? existing)
+        {
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            if (scope.IsAhq)
+            {
+                return null;
+            }
+
+            var cmdId = model.CmdId ?? existing?.CmdId;
+            var baseId = model.BaseId ?? existing?.BaseId;
+
+            if (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!scope.BaseId.HasValue || (baseId.HasValue && baseId.Value != scope.BaseId.Value))
+                {
+                    return Forbid();
+                }
+            }
+            else if (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!scope.CmdId.HasValue || (cmdId.HasValue && cmdId.Value != scope.CmdId.Value))
+                {
+                    return Forbid();
+                }
+
+                if (scope.BaseId.HasValue)
+                {
+                    if (baseId.HasValue && baseId.Value != scope.BaseId.Value)
+                    {
+                        return Forbid();
+                    }
+                }
+                else if (baseId.HasValue && !scope.AllowedBaseIds.Contains(baseId.Value))
+                {
+                    return Forbid();
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Returns true when create/update must be blocked (invoice date is not strictly after the lock date).
+        /// </summary>
+        private async Task<bool> IsInvoiceDateLockedAsync(DateTime? invoiceDate)
+        {
+            if (!invoiceDate.HasValue || invoiceDate.Value == default)
+            {
+                return true;
             }
 
             var lockingDate = await _context.LockDates
@@ -242,12 +450,15 @@ namespace A1.Api.Controllers
                 return false;
             }
 
-            return periodEnd.Date >= lockingDate.Value.Date;
+            return invoiceDate.Value.Date <= lockingDate.Value.Date;
         }
 
-        private static void ApplyInvoiceModel(ContractInvoicesEdit target, ContractInvoicesEdit source)
+        private void ApplyInvoiceModel(ContractInvoicesEdit target, ContractInvoicesEdit source, bool isCreate)
         {
             target.ContractId = source.ContractId;
+            target.SubInvoiceNo = string.IsNullOrWhiteSpace(source.SubInvoiceNo)
+                ? target.SubInvoiceNo
+                : source.SubInvoiceNo.Trim();
             target.PeriodStart = source.PeriodStart;
             target.PeriodEnd = source.PeriodEnd;
             target.DueDate = source.DueDate;
@@ -271,8 +482,19 @@ namespace A1.Api.Controllers
             target.ClassId = source.ClassId;
             target.AmountReceived = source.AmountReceived;
             target.AmountReceivable = source.AmountReceivable;
-            target.Pending = source.Pending;
+            target.AmountPending = source.AmountPending;
             target.InvoiceStatus = source.InvoiceStatus;
+
+            if (isCreate)
+            {
+                target.IsDeleted = source.IsDeleted ?? false;
+            }
+
+            target.ActionDate = source.ActionDate ?? DateTime.UtcNow;
+            target.Action = string.IsNullOrWhiteSpace(source.Action)
+                ? (isCreate ? "CREATE" : "UPDATE")
+                : source.Action;
+            target.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, source.ActionBy);
         }
 
         private static void AddStringParameter(DbCommand command, string name, string? value)

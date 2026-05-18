@@ -4,11 +4,8 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace A1.Api.Models
 {
     [Table("ContractInvoicesEdit", Schema = "dbo")]
-    public class ContractInvoicesEdit
+    public class ContractInvoicesEdit : BaseEntity
     {
-        [Key]
-        public int Id { get; set; }
-
         public int ContractId { get; set; }
 
         [MaxLength(50)]
@@ -16,6 +13,9 @@ namespace A1.Api.Models
 
         [MaxLength(50)]
         public string InvoiceNo { get; set; } = string.Empty;
+
+        [MaxLength(50)]
+        public string? SubInvoiceNo { get; set; }
 
         public DateTime PeriodStart { get; set; }
         public DateTime PeriodEnd { get; set; }
@@ -71,7 +71,7 @@ namespace A1.Api.Models
         public decimal? AmountReceivable { get; set; }
 
         [Column(TypeName = "decimal(18,4)")]
-        public decimal? Pending { get; set; }
+        public decimal? AmountPending { get; set; }
 
         [MaxLength(20)]
         public string? InvoiceStatus { get; set; }

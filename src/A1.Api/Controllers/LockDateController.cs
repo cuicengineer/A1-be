@@ -23,7 +23,7 @@ namespace A1.Api.Controllers
         public async Task<IActionResult> GetAll()
         {
             var items = await _context.LockDates
-                .AsNoTracking()
+                .AsNoTracking() 
                 .Where(x => x.IsDeleted == null || x.IsDeleted == false)
                 .OrderByDescending(x => x.Id)
                 .ToListAsync();

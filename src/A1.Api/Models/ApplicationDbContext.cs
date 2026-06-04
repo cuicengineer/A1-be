@@ -97,6 +97,9 @@ namespace A1.Api.Models
                 e.Property(x => x.ContractEndDate).HasColumnType("date");
                 e.Property(x => x.RiseDate).HasColumnType("date");
                 e.Property(x => x.CreatedAt).HasColumnType("datetime");
+                e.Property(x => x.ItemwithCode).HasMaxLength(200);
+                e.Property(x => x.Description).HasMaxLength(500);
+                e.Property(x => x.AccHead).HasMaxLength(100);
                 e.HasIndex(x => new { x.ContractNo, x.InvoiceNo, x.SubInvoiceNo });
             });
 

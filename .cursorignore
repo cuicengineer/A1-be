@@ -1,0 +1,40 @@
+﻿# React
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# .NET
+bin/
+obj/
+TestResults/
+
+# Git
+.git/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Package caches
+.pnpm-store/
+.npm/
+
+# Generated files
+*.generated.*
+*.min.js
+*.map
+
+# Database backups
+*.bak
+*.mdf
+*.ldf
+
+# Large assets
+*.zip
+*.rar
+*.7z

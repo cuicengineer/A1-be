@@ -29,6 +29,24 @@ namespace A1.Api.Models
         [Column(TypeName = "decimal(18,4)")]
         public decimal? TotalRent { get; set; }
 
+        /// <summary>Line item: item with code (UI column Item with Code).</summary>
+        [MaxLength(200)]
+        public string? ItemwithCode { get; set; }
+
+        /// <summary>Line item description (UI column Desc). Header-level period text may also use this on main rows.</summary>
+        [MaxLength(500)]
+        public string? Description { get; set; }
+
+        /// <summary>Line item accounting head (UI column Acc Head).</summary>
+        [MaxLength(100)]
+        public string? AccHead { get; set; }
+
+        /// <summary>Line item discount percent (UI column Discount).</summary>
+        public int? Discount { get; set; }
+
+        /// <summary>Display/sort order within the invoice (UI column Order).</summary>
+        public int? SortOrder { get; set; }
+
         [MaxLength(500)]
         public string? Remarks { get; set; }
 
@@ -77,5 +95,10 @@ namespace A1.Api.Models
         public string? InvoiceStatus { get; set; }
 
         public DateTime? CreatedAt { get; set; }
+
+        public bool? IsLocked { get; set; }
+
+        /// <summary>When true, invoice appears finalized in sp_GetContractInvoiceSchedule (header row: SubInvoiceNo null).</summary>
+        public bool? IsFinalized { get; set; }
     }
 }

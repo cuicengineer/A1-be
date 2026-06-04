@@ -175,6 +175,11 @@ namespace A1.Api.Controllers
                     Months = x.Months,
                     CalculatedRentPM = x.CalculatedRentPM,
                     TotalRent = x.TotalRent,
+                    ItemwithCode = x.ItemwithCode,
+                    Description = x.Description,
+                    AccHead = x.AccHead,
+                    Discount = x.Discount,
+                    SortOrder = x.SortOrder,
                     Remarks = x.Remarks,
                     ContractStartDate = x.ContractStartDate,
                     ContractEndDate = x.ContractEndDate,
@@ -268,11 +273,11 @@ namespace A1.Api.Controllers
         /// PUT: Upsert by ContractNo, InvoiceNo, and SubInvoiceNo — update if exists, otherwise create.
         /// Route: PUT /api/ContractInvoiceSchedule/{contractNo}/{invoiceNo}/{subInvoiceNo}
         /// </summary>
-        [HttpPut("{contractNo}/{invoiceNo}/{subInvoiceNo}")]
+        [HttpPut("{contractNo}/{invoiceNo}/{subInvoiceNo?}")]
         public async Task<IActionResult> Update(
             string contractNo,
             string invoiceNo,
-            string subInvoiceNo,
+            string? subInvoiceNo,
             [FromBody] ContractInvoicesEdit model)
         {
             if (!TryNormalizeKeys(contractNo, invoiceNo, subInvoiceNo, out contractNo, out invoiceNo, out subInvoiceNo, out var keyError))
@@ -352,35 +357,41 @@ namespace A1.Api.Controllers
             return NoContent();
         }
 
-        private async Task<ContractInvoicesEdit?> FindEditAsync(string contractNo, string invoiceNo, string subInvoiceNo)
+        private async Task<ContractInvoicesEdit?> FindEditAsync(
+            string contractNo,
+            string invoiceNo,
+            string? subInvoiceNo)
         {
+            var isHeaderRow = string.IsNullOrWhiteSpace(subInvoiceNo);
             return await _context.ContractInvoicesEdits
                 .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(x =>
                     x.ContractNo == contractNo
                     && x.InvoiceNo == invoiceNo
-                    && (x.SubInvoiceNo ?? string.Empty) == subInvoiceNo);
+                    && (isHeaderRow
+                        ? x.SubInvoiceNo == null || x.SubInvoiceNo == ""
+                        : (x.SubInvoiceNo ?? string.Empty) == subInvoiceNo));
         }
 
         private static bool TryNormalizeKeys(
             string contractNo,
             string invoiceNo,
-            string subInvoiceNo,
+            string? subInvoiceNo,
             out string normalizedContractNo,
             out string normalizedInvoiceNo,
-            out string normalizedSubInvoiceNo,
+            out string? normalizedSubInvoiceNo,
             out string error)
         {
-            normalizedContractNo = contractNo.Trim();
-            normalizedInvoiceNo = invoiceNo.Trim();
-            normalizedSubInvoiceNo = subInvoiceNo.Trim();
+            normalizedContractNo = contractNo?.Trim() ?? string.Empty;
+            normalizedInvoiceNo = invoiceNo?.Trim() ?? string.Empty;
+            var subTrimmed = subInvoiceNo?.Trim();
+            normalizedSubInvoiceNo = string.IsNullOrWhiteSpace(subTrimmed) ? null : subTrimmed;
             error = string.Empty;
 
             if (string.IsNullOrWhiteSpace(normalizedContractNo)
-                || string.IsNullOrWhiteSpace(normalizedInvoiceNo)
-                || string.IsNullOrWhiteSpace(normalizedSubInvoiceNo))
+                || string.IsNullOrWhiteSpace(normalizedInvoiceNo))
             {
-                error = "contractNo, invoiceNo, and subInvoiceNo are required.";
+                error = "contractNo and invoiceNo are required.";
                 return false;
             }
 
@@ -456,15 +467,25 @@ namespace A1.Api.Controllers
         private void ApplyInvoiceModel(ContractInvoicesEdit target, ContractInvoicesEdit source, bool isCreate)
         {
             target.ContractId = source.ContractId;
-            target.SubInvoiceNo = string.IsNullOrWhiteSpace(source.SubInvoiceNo)
-                ? target.SubInvoiceNo
-                : source.SubInvoiceNo.Trim();
+            if (!string.IsNullOrWhiteSpace(source.SubInvoiceNo))
+            {
+                target.SubInvoiceNo = source.SubInvoiceNo.Trim();
+            }
+            else if (string.IsNullOrWhiteSpace(target.SubInvoiceNo))
+            {
+                target.SubInvoiceNo = null;
+            }
             target.PeriodStart = source.PeriodStart;
             target.PeriodEnd = source.PeriodEnd;
             target.DueDate = source.DueDate;
             target.Months = source.Months;
             target.CalculatedRentPM = source.CalculatedRentPM;
             target.TotalRent = source.TotalRent;
+            target.ItemwithCode = source.ItemwithCode;
+            target.Description = source.Description;
+            target.AccHead = source.AccHead;
+            target.Discount = source.Discount;
+            target.SortOrder = source.SortOrder;
             target.Remarks = source.Remarks;
             target.ContractStartDate = source.ContractStartDate;
             target.ContractEndDate = source.ContractEndDate;
@@ -484,6 +505,11 @@ namespace A1.Api.Controllers
             target.AmountReceivable = source.AmountReceivable;
             target.AmountPending = source.AmountPending;
             target.InvoiceStatus = source.InvoiceStatus;
+            target.IsLocked = source.IsLocked;
+            if (source.IsFinalized.HasValue)
+            {
+                target.IsFinalized = source.IsFinalized;
+            }
 
             if (isCreate)
             {

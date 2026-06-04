@@ -1,0 +1,73 @@
+﻿# Cursor ignore — reduce indexing noise for faster scans.
+# Focus areas (NOT ignored): src/, scripts/, login_page/, docs/, public/
+# File types kept: .js, .jsx, .css, .html, .md, .json, .yaml, .yml, .env
+# Syntax matches .gitignore. Cursor also respects .gitignore by default.
+
+# --- Dependencies & build output ---
+node_modules/
+build/
+coverage/
+dist/
+
+# --- Archives & bundled deps ---
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+node_modules.zip
+src.zip
+
+# --- Version control & IDE meta ---
+.git/
+.cursor/
+
+# --- Logs & caches ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.cache/
+.eslintcache
+
+# --- Lock files (large, low signal) ---
+package-lock.json
+yarn.lock
+
+# --- Binary & media (skip; focus on text source) ---
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.bmp
+*.svg
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.mp4
+*.mp3
+*.pdf
+
+# --- Source maps & minified bundles ---
+*.map
+*.min.js
+*.min.css
+
+
+node_modules/
+bin/
+obj/
+dist/
+build/
+.vs/
+.git/
+coverage/
+logs/
+.next/
+out/
+
+# --- Misc root clutter ---
+Menu DB Changes.txt
+commit.sh

@@ -193,7 +193,12 @@ app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServi
 bool IsDedicatedControllerEntity(string entityName) =>
     string.Equals(entityName, "Class", StringComparison.OrdinalIgnoreCase) ||
     string.Equals(entityName, "UserAppoint", StringComparison.OrdinalIgnoreCase) ||
-    string.Equals(entityName, "AccountingSys", StringComparison.OrdinalIgnoreCase);
+    string.Equals(entityName, "AccountingSys", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(entityName, "ChartOfAccount", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(entityName, "ChartOfAccountSubGroup", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(entityName, "ChartOfAccountControlAccount", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(entityName, "IncomeStatement", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(entityName, "IncomeStatementSubGroup", StringComparison.OrdinalIgnoreCase);
 
 // Helper to get the generic repository
 object? GetRepository(IServiceProvider sp, string entityName)

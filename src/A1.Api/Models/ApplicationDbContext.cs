@@ -22,6 +22,7 @@ namespace A1.Api.Models
         public DbSet<Contract> Contracts { get; set; }
         public DbSet<PropertyGroupLinking> PropertyGroupLinkings { get; set; }
         public DbSet<ContractRiseTerm> ContractRiseTerms { get; set; }
+        public DbSet<ContractAnnotation> ContractAnnotations { get; set; }
         public DbSet<RentalValueGovtShareRate> RentalValueGovtShareRates { get; set; }
         public DbSet<UserNote> UserNotes { get; set; }
         public DbSet<SharingFormula> SharingFormulas { get; set; }
@@ -35,6 +36,11 @@ namespace A1.Api.Models
 
         public DbSet<LockDate> LockDates { get; set; }
         public DbSet<AccountingSys> AccountingSys { get; set; }
+        public DbSet<ChartOfAccount> ChartOfAccounts { get; set; }
+        public DbSet<ChartOfAccountSubGroup> ChartOfAccountSubGroups { get; set; }
+        public DbSet<ChartOfAccountControlAccount> ChartOfAccountControlAccounts { get; set; }
+        public DbSet<IncomeStatement> IncomeStatements { get; set; }
+        public DbSet<IncomeStatementSubGroup> IncomeStatementSubGroups { get; set; }
         public DbSet<ContractInvoicesEdit> ContractInvoicesEdits { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -44,6 +50,15 @@ namespace A1.Api.Models
             modelBuilder.Entity<RentalProperty>().ToTable("RentalProperties", "dbo");
             modelBuilder.Entity<PropertyGroup>().ToTable("PropertyGroups", "dbo");
             modelBuilder.Entity<ContractRiseTerm>().ToTable("ContractRiseTerms", "dbo");
+            modelBuilder.Entity<ContractAnnotation>(e =>
+            {
+                e.ToTable("ContractAnnotations", "dbo");
+                e.Property(x => x.Remarks).HasMaxLength(500).IsRequired();
+                e.Property(x => x.RemarksBy).HasMaxLength(150);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+                e.HasIndex(x => x.ContractId);
+            });
             modelBuilder.Entity<UserNote>().ToTable("UserNotes", "dbo");
 
             modelBuilder.Entity<AuditLog>(e =>
@@ -98,6 +113,56 @@ namespace A1.Api.Models
                 e.Property(x => x.ParticularName).HasMaxLength(200).IsRequired();
                 e.Property(x => x.Address).HasMaxLength(500);
                 e.Property(x => x.TelNo).HasMaxLength(50);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ChartOfAccount>(e =>
+            {
+                e.ToTable("ChartOfAccounts", "dbo");
+                e.Property(x => x.AcctId).HasMaxLength(50);
+                e.Property(x => x.AcctName).HasMaxLength(200).IsRequired();
+                e.Property(x => x.GroupName).HasMaxLength(50).IsRequired();
+                e.Property(x => x.SubGroup).HasMaxLength(150);
+                e.Property(x => x.ControlAccount).HasMaxLength(100);
+                e.Property(x => x.SectionType).HasMaxLength(100).IsRequired();
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ChartOfAccountSubGroup>(e =>
+            {
+                e.ToTable("ChartOfAccountSubGroups", "dbo");
+                e.Property(x => x.GroupName).HasMaxLength(50).IsRequired();
+                e.Property(x => x.SubGroupName).HasMaxLength(150).IsRequired();
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ChartOfAccountControlAccount>(e =>
+            {
+                e.ToTable("ChartOfAccountControlAccounts", "dbo");
+                e.Property(x => x.ControlAccountName).HasMaxLength(100).IsRequired();
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<IncomeStatement>(e =>
+            {
+                e.ToTable("IncomeStatements", "dbo");
+                e.Property(x => x.AcctId).HasMaxLength(50);
+                e.Property(x => x.AcctName).HasMaxLength(200).IsRequired();
+                e.Property(x => x.GroupName).HasMaxLength(50).IsRequired();
+                e.Property(x => x.SubGroup).HasMaxLength(150);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<IncomeStatementSubGroup>(e =>
+            {
+                e.ToTable("IncomeStatementSubGroups", "dbo");
+                e.Property(x => x.GroupName).HasMaxLength(50).IsRequired();
+                e.Property(x => x.SubGroupName).HasMaxLength(150).IsRequired();
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
             });

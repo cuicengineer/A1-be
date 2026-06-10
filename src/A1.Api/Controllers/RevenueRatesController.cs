@@ -35,6 +35,18 @@ namespace A1.Api.Controllers
             return 3;
         }
 
+        /// <summary>
+        /// RR FY from Applicable Date: Jan–Jun → previous FY; Jul–Dec → current FY (e.g. 27-Jun-2026 → 2025-26).
+        /// </summary>
+        private static string? GetFiscalFromApplicableDate(DateTime? applicableDate)
+        {
+            if (!applicableDate.HasValue) return null;
+            var d = applicableDate.Value;
+            return d.Month >= 7
+                ? $"{d.Year}-{(d.Year + 1).ToString().Substring(2)}"
+                : $"{d.Year - 1}-{d.Year.ToString().Substring(2)}";
+        }
+
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
         {
@@ -204,11 +216,7 @@ namespace A1.Api.Controllers
             }
 
             revenueRate.IsDeleted = false;
-            revenueRate.Fiscal = revenueRate.ApplicableDate.HasValue
-            ? (revenueRate.ApplicableDate.Value.Month >= 6
-                  ? $"{revenueRate.ApplicableDate.Value.Year}-{(revenueRate.ApplicableDate.Value.Year + 1).ToString().Substring(2)}"
-                  : $"{revenueRate.ApplicableDate.Value.Year - 1}-{revenueRate.ApplicableDate.Value.Year.ToString().Substring(2)}")
-                : null;
+            revenueRate.Fiscal = GetFiscalFromApplicableDate(revenueRate.ApplicableDate);
             revenueRate.RateScope = GetRateScope(revenueRate.CmdId, revenueRate.BaseId);
             revenueRate.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);
             await _repository.AddAsync(revenueRate);
@@ -261,11 +269,7 @@ namespace A1.Api.Controllers
             existing.Rate = revenueRate.Rate;
             existing.Attachments = revenueRate.Attachments;
             existing.Status = revenueRate.Status;
-            existing.Fiscal = existing.ApplicableDate.HasValue
-            ? (existing.ApplicableDate.Value.Month >= 6
-                ? $"{existing.ApplicableDate.Value.Year}-{existing.ApplicableDate.Value.Year + 1}"
-                : $"{existing.ApplicableDate.Value.Year - 1}-{existing.ApplicableDate.Value.Year}")
-            : null;
+            existing.Fiscal = GetFiscalFromApplicableDate(existing.ApplicableDate);
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);

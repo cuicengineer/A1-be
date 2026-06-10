@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Http;
 using System;
 using Microsoft.AspNetCore.Authorization;
 using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 namespace A1.Api.Controllers
 {
@@ -44,6 +46,24 @@ namespace A1.Api.Controllers
             public int? LevelId { get; set; }
             public byte? Status { get; set; }
             public string AccessToken { get; set; } = string.Empty;
+            public string ClientIp { get; set; } = string.Empty;
+            public List<UserPermissionDto> Permissions { get; set; } = new();
+        }
+
+        public class RefreshResponse
+        {
+            public string AccessToken { get; set; } = string.Empty;
+            public string ClientIp { get; set; } = string.Empty;
+            public int UserId { get; set; }
+            public string Username { get; set; } = string.Empty;
+            public string? Name { get; set; }
+            public string? Rank { get; set; }
+            public string? Category { get; set; }
+            public int? UnitId { get; set; }
+            public int? BaseId { get; set; }
+            public int? CmdId { get; set; }
+            public int? LevelId { get; set; }
+            public byte? Status { get; set; }
             public List<UserPermissionDto> Permissions { get; set; } = new();
         }
 
@@ -112,22 +132,7 @@ namespace A1.Api.Controllers
 
             var permissions = await GetUserPermissionsAsync(user.Id);
 
-            var response = new LoginResponse
-            {
-                UserId = user.Id,
-                Username = user.Username,
-                Name = user.Name,
-                Rank = user.Rank,
-                Category = user.Category,
-                UnitId = user.UnitId,
-                BaseId = user.BaseId,
-                CmdId = user.CmdId,
-                LevelId = user.LevelId,
-                Status = user.Status,
-                AccessToken = accessToken,
-                Permissions = permissions
-            };
-
+            var response = BuildLoginResponse(user, accessToken, permissions);
             return Ok(response);
         }
 
@@ -157,7 +162,73 @@ namespace A1.Api.Controllers
             SetRefreshTokenCookie(newRefreshToken, user.RefreshTokenExpiresAt);
 
             var permissions = await GetUserPermissionsAsync(user.Id);
-            return Ok(new { accessToken = newAccessToken, permissions });
+            return Ok(BuildRefreshResponse(user, newAccessToken, permissions));
+        }
+
+        [HttpGet("me")]
+        [Authorize]
+        public async Task<IActionResult> Me()
+        {
+            var userIdClaim = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!int.TryParse(userIdClaim, out var userId))
+            {
+                return Unauthorized();
+            }
+
+            var user = await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null || user.Status != 1)
+            {
+                return Unauthorized();
+            }
+
+            var permissions = await GetUserPermissionsAsync(user.Id);
+            var response = BuildLoginResponse(user, string.Empty, permissions);
+            response.AccessToken = string.Empty;
+            return Ok(response);
+        }
+
+        private LoginResponse BuildLoginResponse(User user, string accessToken, List<UserPermissionDto> permissions)
+        {
+            return new LoginResponse
+            {
+                UserId = user.Id,
+                Username = user.Username,
+                Name = user.Name,
+                Rank = user.Rank,
+                Category = user.Category,
+                UnitId = user.UnitId,
+                BaseId = user.BaseId,
+                CmdId = user.CmdId,
+                LevelId = user.LevelId,
+                Status = user.Status,
+                AccessToken = accessToken,
+                ClientIp = ActionByHelper.GetClientIp(HttpContext),
+                Permissions = permissions
+            };
+        }
+
+        private RefreshResponse BuildRefreshResponse(User user, string accessToken, List<UserPermissionDto> permissions)
+        {
+            return new RefreshResponse
+            {
+                AccessToken = accessToken,
+                ClientIp = ActionByHelper.GetClientIp(HttpContext),
+                UserId = user.Id,
+                Username = user.Username,
+                Name = user.Name,
+                Rank = user.Rank,
+                Category = user.Category,
+                UnitId = user.UnitId,
+                BaseId = user.BaseId,
+                CmdId = user.CmdId,
+                LevelId = user.LevelId,
+                Status = user.Status,
+                Permissions = permissions
+            };
         }
 
         private Task<List<UserPermissionDto>> GetUserPermissionsAsync(int userId)

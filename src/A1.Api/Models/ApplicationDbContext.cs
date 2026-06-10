@@ -31,8 +31,10 @@ namespace A1.Api.Models
         public DbSet<UserPermission> UserPermissions { get; set; }
         public DbSet<BankAccount> BankAccounts { get; set; }
         public DbSet<AccRacBase> AccRacBases { get; set; }
+        public DbSet<UserAppoint> UserAppoints { get; set; }
 
         public DbSet<LockDate> LockDates { get; set; }
+        public DbSet<AccountingSys> AccountingSys { get; set; }
         public DbSet<ContractInvoicesEdit> ContractInvoicesEdits { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -72,6 +74,14 @@ namespace A1.Api.Models
                 e.Property(x => x.ActionBy).HasMaxLength(50);
             });
 
+            modelBuilder.Entity<UserAppoint>(e =>
+            {
+                e.ToTable("UserAppoints", "dbo");
+                e.Property(x => x.Name).HasMaxLength(150).IsRequired();
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
             modelBuilder.Entity<LockDate>(e =>
             {
                 e.ToTable("LockDate", "dbo");
@@ -80,6 +90,16 @@ namespace A1.Api.Models
                 e.Property(x => x.LockingDate).HasColumnName("LockingDate").HasColumnType("date");
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(50);
+            });
+
+            modelBuilder.Entity<AccountingSys>(e =>
+            {
+                e.ToTable("AccountingSys", "dbo");
+                e.Property(x => x.ParticularName).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Address).HasMaxLength(500);
+                e.Property(x => x.TelNo).HasMaxLength(50);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
             });
 
             modelBuilder.Entity<ContractInvoicesEdit>(e =>
@@ -101,6 +121,11 @@ namespace A1.Api.Models
                 e.Property(x => x.Description).HasMaxLength(500);
                 e.Property(x => x.AccHead).HasMaxLength(100);
                 e.HasIndex(x => new { x.ContractNo, x.InvoiceNo, x.SubInvoiceNo });
+            });
+
+            modelBuilder.Entity<Class>(e =>
+            {
+                e.Property(x => x.UoM).HasMaxLength(20);
             });
 
             modelBuilder.Entity<BankAccount>(e =>

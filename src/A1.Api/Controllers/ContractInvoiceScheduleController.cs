@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
 using System.Data.Common;
+using System.Linq;
 
 namespace A1.Api.Controllers
 {
@@ -33,108 +34,60 @@ namespace A1.Api.Controllers
             [FromQuery] int? cmdId = null,
             [FromQuery] int? classId = null,
             [FromQuery] int? baseId = null,
+            [FromQuery] bool? isFinalized = null,
+            [FromQuery] string? invoiceNo = null,
             CancellationToken cancellationToken = default)
         {
-            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
-            if (!scope.IsAhq)
+            var scope = await ApplyScheduleScopeFiltersAsync(cmdId, baseId);
+            if (scope.Error != null)
             {
-                if (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!scope.BaseId.HasValue)
-                    {
-                        return Forbid();
-                    }
-
-                    if (baseId.HasValue && baseId.Value != scope.BaseId.Value)
-                    {
-                        return Forbid();
-                    }
-
-                    baseId = scope.BaseId.Value;
-                    if (scope.CmdId.HasValue)
-                    {
-                        if (cmdId.HasValue && cmdId.Value != scope.CmdId.Value)
-                        {
-                            return Forbid();
-                        }
-
-                        cmdId = scope.CmdId.Value;
-                    }
-                }
-                else if (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!scope.CmdId.HasValue)
-                    {
-                        return Forbid();
-                    }
-
-                    if (cmdId.HasValue && cmdId.Value != scope.CmdId.Value)
-                    {
-                        return Forbid();
-                    }
-
-                    cmdId = scope.CmdId.Value;
-
-                    if (scope.BaseId.HasValue)
-                    {
-                        if (baseId.HasValue && baseId.Value != scope.BaseId.Value)
-                        {
-                            return Forbid();
-                        }
-
-                        baseId = scope.BaseId.Value;
-                    }
-                    else if (baseId.HasValue && !scope.AllowedBaseIds.Contains(baseId.Value))
-                    {
-                        return Forbid();
-                    }
-                }
+                return scope.Error;
             }
 
-            await using var connection = _context.Database.GetDbConnection();
-            if (connection.State != ConnectionState.Open)
-            {
-                await connection.OpenAsync(cancellationToken);
-            }
-
-            await using var command = connection.CreateCommand();
-            command.CommandText = "dbo.sp_GetContractInvoiceSchedule";
-            command.CommandType = CommandType.StoredProcedure;
-            command.CommandTimeout = 120;
-
-            AddStringParameter(command, "@ContractNo", string.IsNullOrWhiteSpace(contractNo) ? null : contractNo.Trim());
-            AddDateParameter(command, "@FromDate", fromDate);
-            AddDateParameter(command, "@ToDate", toDate);
-            AddIntParameter(command, "@CmdId", cmdId);
-            AddIntParameter(command, "@ClassId", classId);
-            AddIntParameter(command, "@BaseId", baseId);
-
-            var results = new List<Dictionary<string, object?>>();
-
-            await using var reader = await command.ExecuteReaderAsync(
-                CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
+            var results = await QueryContractInvoiceScheduleAsync(
+                contractNo,
+                fromDate,
+                toDate,
+                scope.CmdId,
+                classId,
+                scope.BaseId,
                 cancellationToken);
 
-            var fieldCount = reader.FieldCount;
-            var names = new string[fieldCount];
-            for (int i = 0; i < fieldCount; i++)
+            return Ok(FilterScheduleRows(results, isFinalized, invoiceNo));
+        }
+
+        /// <summary>
+        /// GET: Finalized invoice schedule search (agreement-prov-invoice). All query parameters optional.
+        /// Route: GET /api/ContractInvoiceSchedule/by-invoice?invoiceNo=&amp;contractNo=&amp;fromDate=&amp;toDate=&amp;cmdId=&amp;classId=&amp;baseId=&amp;isFinalized=
+        /// </summary>
+        [HttpGet("by-invoice")]
+        public async Task<IActionResult> SearchByInvoiceQuery(
+            [FromQuery] string? invoiceNo = null,
+            [FromQuery] string? contractNo = null,
+            [FromQuery] DateTime? fromDate = null,
+            [FromQuery] DateTime? toDate = null,
+            [FromQuery] int? cmdId = null,
+            [FromQuery] int? classId = null,
+            [FromQuery] int? baseId = null,
+            [FromQuery] bool? isFinalized = true,
+            CancellationToken cancellationToken = default)
+        {
+            var scope = await ApplyScheduleScopeFiltersAsync(cmdId, baseId);
+            if (scope.Error != null)
             {
-                names[i] = reader.GetName(i);
+                return scope.Error;
             }
 
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < fieldCount; i++)
-                {
-                    var value = reader.GetValue(i);
-                    row[names[i]] = value == DBNull.Value ? null : value;
-                }
+            var results = await QueryContractInvoiceScheduleAsync(
+                contractNo,
+                fromDate,
+                toDate,
+                scope.CmdId,
+                classId,
+                scope.BaseId,
+                cancellationToken);
 
-                results.Add(row);
-            }
-
-            return Ok(results);
+            return Ok(FilterScheduleRows(results, isFinalized, invoiceNo));
         }
 
         /// <summary>
@@ -521,6 +474,213 @@ namespace A1.Api.Controllers
                 ? (isCreate ? "CREATE" : "UPDATE")
                 : source.Action;
             target.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, source.ActionBy);
+        }
+
+        private async Task<(IActionResult? Error, int? CmdId, int? BaseId)> ApplyScheduleScopeFiltersAsync(
+            int? cmdId,
+            int? baseId)
+        {
+            var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
+            if (scope.IsAhq)
+            {
+                return (null, cmdId, baseId);
+            }
+
+            if (string.Equals(scope.AccessLevel, "base", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!scope.BaseId.HasValue)
+                {
+                    return (Forbid(), cmdId, baseId);
+                }
+
+                if (baseId.HasValue && baseId.Value != scope.BaseId.Value)
+                {
+                    return (Forbid(), cmdId, baseId);
+                }
+
+                baseId = scope.BaseId.Value;
+                if (scope.CmdId.HasValue)
+                {
+                    if (cmdId.HasValue && cmdId.Value != scope.CmdId.Value)
+                    {
+                        return (Forbid(), cmdId, baseId);
+                    }
+
+                    cmdId = scope.CmdId.Value;
+                }
+            }
+            else if (string.Equals(scope.AccessLevel, "command", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!scope.CmdId.HasValue)
+                {
+                    return (Forbid(), cmdId, baseId);
+                }
+
+                if (cmdId.HasValue && cmdId.Value != scope.CmdId.Value)
+                {
+                    return (Forbid(), cmdId, baseId);
+                }
+
+                cmdId = scope.CmdId.Value;
+
+                if (scope.BaseId.HasValue)
+                {
+                    if (baseId.HasValue && baseId.Value != scope.BaseId.Value)
+                    {
+                        return (Forbid(), cmdId, baseId);
+                    }
+
+                    baseId = scope.BaseId.Value;
+                }
+                else if (baseId.HasValue && !scope.AllowedBaseIds.Contains(baseId.Value))
+                {
+                    return (Forbid(), cmdId, baseId);
+                }
+            }
+
+            return (null, cmdId, baseId);
+        }
+
+        private async Task<List<Dictionary<string, object?>>> QueryContractInvoiceScheduleAsync(
+            string? contractNo,
+            DateTime? fromDate,
+            DateTime? toDate,
+            int? cmdId,
+            int? classId,
+            int? baseId,
+            CancellationToken cancellationToken)
+        {
+            await using var connection = _context.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+            {
+                await connection.OpenAsync(cancellationToken);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "dbo.sp_GetContractInvoiceSchedule";
+            command.CommandType = CommandType.StoredProcedure;
+            command.CommandTimeout = 120;
+
+            AddStringParameter(command, "@ContractNo", string.IsNullOrWhiteSpace(contractNo) ? null : contractNo.Trim());
+            AddDateParameter(command, "@FromDate", fromDate);
+            AddDateParameter(command, "@ToDate", toDate);
+            AddIntParameter(command, "@CmdId", cmdId);
+            AddIntParameter(command, "@ClassId", classId);
+            AddIntParameter(command, "@BaseId", baseId);
+
+            var results = new List<Dictionary<string, object?>>();
+
+            await using var reader = await command.ExecuteReaderAsync(
+                CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
+                cancellationToken);
+
+            var fieldCount = reader.FieldCount;
+            var names = new string[fieldCount];
+            for (int i = 0; i < fieldCount; i++)
+            {
+                names[i] = reader.GetName(i);
+            }
+
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < fieldCount; i++)
+                {
+                    var value = reader.GetValue(i);
+                    row[names[i]] = value == DBNull.Value ? null : value;
+                }
+
+                results.Add(row);
+            }
+
+            return results;
+        }
+
+        private static List<Dictionary<string, object?>> FilterScheduleRows(
+            IEnumerable<Dictionary<string, object?>> rows,
+            bool? isFinalized,
+            string? invoiceNo)
+        {
+            IEnumerable<Dictionary<string, object?>> filtered = rows;
+
+            if (isFinalized == true)
+            {
+                filtered = filtered.Where(RowIsFinalized);
+            }
+            else if (isFinalized == false)
+            {
+                filtered = filtered.Where(row => !RowIsFinalized(row));
+            }
+
+            if (!string.IsNullOrWhiteSpace(invoiceNo))
+            {
+                var invoiceKey = invoiceNo.Trim();
+                filtered = filtered.Where(row =>
+                    string.Equals(ReadRowString(row, "InvoiceNo"), invoiceKey, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return filtered.ToList();
+        }
+
+        private static bool RowIsFinalized(Dictionary<string, object?> row)
+        {
+            if (!TryReadRowValue(row, "IsFinalized", out var value)
+                && !TryReadRowValue(row, "isFinalized", out value)
+                && !TryReadRowValue(row, "IsFinalize", out value)
+                && !TryReadRowValue(row, "isFinalize", out value))
+            {
+                return false;
+            }
+
+            if (value is bool boolValue)
+            {
+                return boolValue;
+            }
+
+            if (value is byte or sbyte or short or ushort or int or uint or long or ulong)
+            {
+                return Convert.ToInt64(value) == 1;
+            }
+
+            var text = Convert.ToString(value)?.Trim();
+            if (string.IsNullOrEmpty(text))
+            {
+                return false;
+            }
+
+            if (string.Equals(text, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return long.TryParse(text, out var numeric) && numeric == 1;
+        }
+
+        private static string ReadRowString(Dictionary<string, object?> row, string key)
+        {
+            return TryReadRowValue(row, key, out var value)
+                ? Convert.ToString(value)?.Trim() ?? string.Empty
+                : string.Empty;
+        }
+
+        private static bool TryReadRowValue(Dictionary<string, object?> row, string key, out object? value)
+        {
+            if (row.TryGetValue(key, out value))
+            {
+                return true;
+            }
+
+            foreach (var pair in row)
+            {
+                if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = pair.Value;
+                    return true;
+                }
+            }
+
+            value = null;
+            return false;
         }
 
         private static void AddStringParameter(DbCommand command, string name, string? value)

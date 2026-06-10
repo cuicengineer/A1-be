@@ -72,6 +72,8 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
+builder.Services.AddScoped<IClassService, ClassService>();
+builder.Services.AddScoped<IAccountingSysService, AccountingSysService>();
 
 var app = builder.Build();
 
@@ -92,6 +94,7 @@ app.UseAuthorization();
 // Generic Minimal API Endpoints
 app.MapGet("/api/{entityName}", async (string entityName, HttpContext httpContext, IServiceProvider sp) =>
 {
+    if (IsDedicatedControllerEntity(entityName)) return Results.NotFound();
     var entityType = GetEntityType(entityName);
     if (entityType == null) return Results.NotFound();
 
@@ -106,6 +109,7 @@ app.MapGet("/api/{entityName}", async (string entityName, HttpContext httpContex
 
 app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, HttpContext httpContext, IServiceProvider sp) =>
 {
+    if (IsDedicatedControllerEntity(entityName)) return Results.NotFound();
     var entityType = GetEntityType(entityName);
     if (entityType == null) return Results.NotFound();
 
@@ -120,6 +124,7 @@ app.MapGet("/api/{entityName}/{id}", async (string entityName, int id, HttpConte
 
 app.MapPost("/api/{entityName}", async (string entityName, System.Text.Json.JsonElement jsonEntity, IServiceProvider sp) =>
 {
+    if (IsDedicatedControllerEntity(entityName)) return Results.NotFound();
     var repo = GetRepository(sp, entityName);
     if (repo == null) return Results.NotFound();
 
@@ -146,6 +151,7 @@ app.MapPost("/api/{entityName}", async (string entityName, System.Text.Json.Json
 
 app.MapPut("/api/{entityName}/{id}", async (string entityName, int id, System.Text.Json.JsonElement jsonEntity, IServiceProvider sp) =>
 {
+    if (IsDedicatedControllerEntity(entityName)) return Results.NotFound();
     var repo = GetRepository(sp, entityName);
     if (repo == null) return Results.NotFound();
 
@@ -175,6 +181,7 @@ app.MapPut("/api/{entityName}/{id}", async (string entityName, int id, System.Te
 
 app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServiceProvider sp) =>
 {
+    if (IsDedicatedControllerEntity(entityName)) return Results.NotFound();
     var repo = GetRepository(sp, entityName);
     if (repo == null) return Results.NotFound();
     var entity = await ((dynamic)repo).GetByIdAsync(id);
@@ -182,6 +189,11 @@ app.MapDelete("/api/{entityName}/{id}", async (string entityName, int id, IServi
     await ((dynamic)repo).DeleteAsync(entity);
     return Results.NoContent();
 }).RequireAuthorization().RequireCors("AllowFrontend");
+
+bool IsDedicatedControllerEntity(string entityName) =>
+    string.Equals(entityName, "Class", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(entityName, "UserAppoint", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(entityName, "AccountingSys", StringComparison.OrdinalIgnoreCase);
 
 // Helper to get the generic repository
 object? GetRepository(IServiceProvider sp, string entityName)

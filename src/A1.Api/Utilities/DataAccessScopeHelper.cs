@@ -357,6 +357,80 @@ namespace A1.Api.Utilities
             return int.TryParse(raw, out var value) ? value : null;
         }
 
+        public static bool IsSupervisorCategory(string? category)
+        {
+            if (string.IsNullOrWhiteSpace(category))
+            {
+                return false;
+            }
+
+            return category
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(token =>
+                    token.Equals("category supervisor", StringComparison.OrdinalIgnoreCase)
+                    || token.Contains("supervisor", StringComparison.OrdinalIgnoreCase));
+        }
+
+        public static async Task<bool> IsAhqUserAsync(ClaimsPrincipal principal, ApplicationDbContext context)
+        {
+            if (principal?.Identity?.IsAuthenticated != true)
+            {
+                return false;
+            }
+
+            if (TryParseIntClaim(principal, "levelId") == 1)
+            {
+                return true;
+            }
+
+            var scope = await ResolveAsync(principal, context);
+            if (scope.IsAhq)
+            {
+                return true;
+            }
+
+            var cmdId = TryParseIntClaim(principal, "cmdId");
+            if (!cmdId.HasValue)
+            {
+                return false;
+            }
+
+            var command = await context.Commands
+                .AsNoTracking()
+                .Where(c => c.Id == cmdId.Value && (c.IsDeleted == null || c.IsDeleted == false))
+                .Select(c => new { c.Name, c.Abb })
+                .FirstOrDefaultAsync();
+
+            if (command == null)
+            {
+                return false;
+            }
+
+            static bool IsAhqLabel(string? value)
+            {
+                return string.Equals((value ?? string.Empty).Trim(), "ahq", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return IsAhqLabel(command.Name) || IsAhqLabel(command.Abb);
+        }
+
+        /// <summary>
+        /// Power users and AHQ supervisors see the full dashboard summary (no Cmd/Base SP filters).
+        /// </summary>
+        public static async Task<bool> ShouldUseUnscopedDashboardSummaryAsync(
+            ClaimsPrincipal principal,
+            ApplicationDbContext context)
+        {
+            var category = principal.FindFirstValue("category");
+            if (string.Equals(category, "Power", StringComparison.OrdinalIgnoreCase)
+                || (IsSupervisorCategory(category) && await IsAhqUserAsync(principal, context)))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
         private static string NormalizeAccessLevel(string? roleName, User? user)
         {
             var role = (roleName ?? string.Empty).Trim().ToLowerInvariant();

@@ -14,6 +14,8 @@ namespace A1.Api.Controllers
     [ApiController]
     public class ChartOfAccountsController : ControllerBase
     {
+        private static readonly string[] CoaGroupOrder = { "Assets", "Liabilities", "Capital", "Suspense" };
+
         private readonly IGenericRepository<ChartOfAccount> _repository;
         private readonly ApplicationDbContext _context;
 
@@ -37,10 +39,7 @@ namespace A1.Api.Controllers
                 query = query.Where(x => x.SectionType == section);
             }
 
-            var rows = await query
-                .OrderBy(x => x.SortOrder)
-                .ThenBy(x => x.Id)
-                .ToListAsync();
+            var rows = SortCoaRows(await query.ToListAsync());
 
             return await OkWithAttachmentFlagsAsync(rows);
         }
@@ -120,13 +119,58 @@ namespace A1.Api.Controllers
 
             if (existing == null) return NotFound();
 
+            var section = existing.SectionType ?? "(A) Balance Sheet";
             existing.IsDeleted = true;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "DELETE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
 
             await _repository.UpdateAsync(existing);
+            await RenormalizeSortOrdersAsync(section);
             return NoContent();
+        }
+
+        [HttpPost("reorder")]
+        public async Task<IActionResult> Reorder([FromBody] ChartOfAccountsReorderRequest request)
+        {
+            if (request == null) return BadRequest("Reorder payload is required.");
+            if (request.Id <= 0) return BadRequest("A valid chart of account Id is required.");
+
+            var direction = (request.Direction ?? string.Empty).Trim().ToLowerInvariant();
+            if (direction != "up" && direction != "down")
+                return BadRequest("Direction must be 'up' or 'down'.");
+
+            var section = string.IsNullOrWhiteSpace(request.SectionType)
+                ? "(A) Balance Sheet"
+                : request.SectionType.Trim();
+
+            var rows = await GetActiveRowsForSectionAsync(section, tracked: true);
+            var movingRow = rows.FirstOrDefault(x => x.Id == request.Id);
+            if (movingRow == null) return NotFound("Chart of account not found.");
+
+            var groupRows = rows
+                .Where(x => string.Equals(x.GroupName, movingRow.GroupName, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.Id)
+                .ToList();
+
+            var index = groupRows.FindIndex(x => x.Id == request.Id);
+            var targetIndex = direction == "up" ? index - 1 : index + 1;
+            if (index < 0 || targetIndex < 0 || targetIndex >= groupRows.Count)
+            {
+                return await OkWithAttachmentFlagsAsync(await GetActiveRowsForSectionAsync(section));
+            }
+
+            var swappedRow = groupRows[index];
+            groupRows.RemoveAt(index);
+            groupRows.Insert(targetIndex, swappedRow);
+
+            await ApplySequentialSortOrdersAsync(
+                groupRows,
+                ActionByHelper.GetActionByWithIp(User, HttpContext, null));
+
+            var responseRows = await GetActiveRowsForSectionAsync(section);
+            return await OkWithAttachmentFlagsAsync(responseRows);
         }
 
         [HttpPost("batch")]
@@ -190,25 +234,98 @@ namespace A1.Api.Controllers
                 await _repository.UpdateAsync(existing);
             }
 
-            var rows = await _context.ChartOfAccounts
+            var rows = SortCoaRows(await _context.ChartOfAccounts
                 .AsNoTracking()
                 .Where(x => x.IsDeleted == null || x.IsDeleted == false)
-                .OrderBy(x => x.SortOrder)
-                .ThenBy(x => x.Id)
-                .ToListAsync();
+                .ToListAsync());
 
             return await OkWithAttachmentFlagsAsync(rows);
         }
 
         private async Task<IActionResult> OkWithAttachmentFlagsAsync(List<ChartOfAccount> rows)
         {
+            var sortedRows = SortCoaRows(rows);
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
                 _context,
-                rows.Select(x => x.Id),
+                sortedRows.Select(x => x.Id),
                 "ChartOfAccounts", "ChartOfAccount");
 
-            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(rows, x => x.Id, attachedIds);
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(sortedRows, x => x.Id, attachedIds);
             return Ok(response);
+        }
+
+        private async Task<List<ChartOfAccount>> GetActiveRowsForSectionAsync(
+            string section,
+            bool tracked = false)
+        {
+            var query = _context.ChartOfAccounts
+                .Where(x => (x.IsDeleted == null || x.IsDeleted == false) && x.SectionType == section);
+
+            if (!tracked)
+            {
+                query = query.AsNoTracking();
+            }
+
+            return SortCoaRows(await query.ToListAsync());
+        }
+
+        private static int GetCoaGroupSortRank(string? groupName)
+        {
+            if (string.IsNullOrWhiteSpace(groupName)) return CoaGroupOrder.Length;
+
+            for (var i = 0; i < CoaGroupOrder.Length; i++)
+            {
+                if (string.Equals(CoaGroupOrder[i], groupName.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+
+            return CoaGroupOrder.Length;
+        }
+
+        private static List<ChartOfAccount> SortCoaRows(IEnumerable<ChartOfAccount> rows)
+        {
+            return rows
+                .OrderBy(x => GetCoaGroupSortRank(x.GroupName))
+                .ThenBy(x => x.SortOrder)
+                .ThenBy(x => x.Id)
+                .ToList();
+        }
+
+        private async Task ApplySequentialSortOrdersAsync(List<ChartOfAccount> rows, string? actionBy)
+        {
+            var now = DateTime.UtcNow;
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var newOrder = i + 1;
+                if (rows[i].SortOrder == newOrder) continue;
+
+                rows[i].SortOrder = newOrder;
+                rows[i].ActionDate = now;
+                rows[i].Action = "UPDATE";
+                rows[i].ActionBy = actionBy;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        private async Task RenormalizeSortOrdersAsync(string section)
+        {
+            var rows = await GetActiveRowsForSectionAsync(section, tracked: true);
+            if (rows.Count == 0) return;
+
+            var actionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, null);
+            foreach (var groupName in CoaGroupOrder)
+            {
+                var groupRows = rows
+                    .Where(x => string.Equals(x.GroupName, groupName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(x => x.SortOrder)
+                    .ThenBy(x => x.Id)
+                    .ToList();
+
+                if (groupRows.Count == 0) continue;
+
+                await ApplySequentialSortOrdersAsync(groupRows, actionBy);
+            }
         }
 
         private static string? ValidateChartOfAccount(ChartOfAccount entity)

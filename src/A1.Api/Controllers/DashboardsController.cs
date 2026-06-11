@@ -1,4 +1,5 @@
 using A1.Api.Models;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
@@ -36,16 +37,18 @@ namespace A1.Api.Controllers
                 return Unauthorized();
             }
 
-            var category = User.FindFirst("category")?.Value;
             var cmdId = TryParseOptionalIntClaim(User.FindFirst("cmdId")?.Value);
             var baseId = TryParseOptionalIntClaim(User.FindFirst("baseId")?.Value);
+            var useUnscopedSummary = await DataAccessScopeHelper.ShouldUseUnscopedDashboardSummaryAsync(
+                User,
+                _context);
 
             await using var command = connection.CreateCommand();
             command.CommandText = "[dbo].[GetPropertyDashboardSummary]";
             command.CommandType = CommandType.StoredProcedure;
             command.CommandTimeout = 120;
 
-            if (string.Equals(category, "Power", StringComparison.OrdinalIgnoreCase))
+            if (useUnscopedSummary)
             {
                 AddIntParameter(command, "@CmdId", null);
                 AddIntParameter(command, "@BaseId", null);

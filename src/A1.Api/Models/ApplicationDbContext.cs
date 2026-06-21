@@ -42,6 +42,13 @@ namespace A1.Api.Models
         public DbSet<IncomeStatement> IncomeStatements { get; set; }
         public DbSet<IncomeStatementSubGroup> IncomeStatementSubGroups { get; set; }
         public DbSet<ContractInvoicesEdit> ContractInvoicesEdits { get; set; }
+        public DbSet<Supplier> Suppliers { get; set; }
+        public DbSet<SupplierRank> SupplierRanks { get; set; }
+        public DbSet<SupplierCodePrefix> SupplierCodePrefixes { get; set; }
+        public DbSet<Customer> Customers { get; set; }
+        public DbSet<CustomerRank> CustomerRanks { get; set; }
+        public DbSet<CollectionEntry> CollectionEntries { get; set; }
+        public DbSet<Receipt> Receipts { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -188,9 +195,113 @@ namespace A1.Api.Models
                 e.HasIndex(x => new { x.ContractNo, x.InvoiceNo, x.SubInvoiceNo });
             });
 
+            modelBuilder.Entity<Supplier>(e =>
+            {
+                e.ToTable("Suppliers", "dbo");
+                e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+                e.Property(x => x.Prefix).HasMaxLength(20);
+                e.Property(x => x.Rank).HasMaxLength(100);
+                e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Address).HasMaxLength(500);
+                e.Property(x => x.Province).HasMaxLength(50);
+                e.Property(x => x.City).HasMaxLength(100);
+                e.Property(x => x.NtnCnic).HasMaxLength(50);
+                e.Property(x => x.GSTNo).HasMaxLength(50);
+                e.Property(x => x.TelNo).HasMaxLength(50);
+                e.Property(x => x.MobileNo).HasMaxLength(50);
+                e.Property(x => x.Representative).HasMaxLength(150);
+                e.Property(x => x.IBAN).HasMaxLength(34);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<SupplierRank>(e =>
+            {
+                e.ToTable("SupplierRanks", "dbo");
+                e.Property(x => x.RankName).HasMaxLength(100).IsRequired();
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<SupplierCodePrefix>(e =>
+            {
+                e.ToTable("SupplierCodePrefixes", "dbo");
+                e.Property(x => x.PrefixAlpha).HasMaxLength(20).IsRequired();
+                e.Property(x => x.Description).HasMaxLength(500);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<Customer>(e =>
+            {
+                e.ToTable("Customers", "dbo");
+                e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+                e.Property(x => x.Prefix).HasMaxLength(20);
+                e.Property(x => x.Rank).HasMaxLength(100);
+                e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Address).HasMaxLength(500);
+                e.Property(x => x.Province).HasMaxLength(50);
+                e.Property(x => x.City).HasMaxLength(100);
+                e.Property(x => x.NtnCnic).HasMaxLength(50);
+                e.Property(x => x.GSTNo).HasMaxLength(50);
+                e.Property(x => x.TelNo).HasMaxLength(50);
+                e.Property(x => x.MobileNo).HasMaxLength(50);
+                e.Property(x => x.Representative).HasMaxLength(150);
+                e.Property(x => x.IBAN).HasMaxLength(34);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<CustomerRank>(e =>
+            {
+                e.ToTable("CustomerRanks", "dbo");
+                e.Property(x => x.RankName).HasMaxLength(100).IsRequired();
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<CollectionEntry>(e =>
+            {
+                e.ToTable("CollectionEntries", "dbo");
+                e.Property(x => x.ContractNo).HasMaxLength(50);
+                e.Property(x => x.TenantBusiness).HasMaxLength(300);
+                e.Property(x => x.InvoiceNo).HasMaxLength(100);
+                e.Property(x => x.DueAmount).HasColumnType("decimal(18,2)");
+                e.Property(x => x.BalanceAmount).HasColumnType("decimal(18,2)");
+                e.Property(x => x.CollectionDate).HasColumnType("date");
+                e.Property(x => x.Amount).HasColumnType("decimal(18,2)");
+                e.Property(x => x.TinTrn).HasMaxLength(100);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<Receipt>(e =>
+            {
+                e.ToTable("Receipts", "dbo");
+                e.Property(x => x.Date).HasColumnType("date");
+                e.Property(x => x.Month).HasMaxLength(10);
+                e.Property(x => x.Reference).HasMaxLength(100);
+                e.Property(x => x.PaidFrom).HasMaxLength(150);
+                e.Property(x => x.PayeeContactType).HasMaxLength(50);
+                e.Property(x => x.PayeeName).HasMaxLength(300);
+                e.Property(x => x.Description).HasMaxLength(500);
+                e.Property(x => x.GrandTotal).HasColumnType("decimal(18,2)");
+                e.Property(x => x.LinesJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.AttachmentsJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
             modelBuilder.Entity<Class>(e =>
             {
                 e.Property(x => x.UoM).HasMaxLength(20);
+            });
+
+            modelBuilder.Entity<Base>(e =>
+            {
+                e.ToTable("Bases", "dbo");
+                e.Property(x => x.FullName).HasColumnType("varchar(500)");
+                e.Property(x => x.Code).HasColumnType("nchar(10)").IsFixedLength();
             });
 
             modelBuilder.Entity<BankAccount>(e =>

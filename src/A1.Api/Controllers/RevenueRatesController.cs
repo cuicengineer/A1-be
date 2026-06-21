@@ -48,11 +48,9 @@ namespace A1.Api.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
         {
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 50;
-
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
             var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
             var baseQuery = _context.RevenueRates
@@ -110,12 +108,12 @@ namespace A1.Api.Controllers
             var totalCount = await dtoQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
-            Response.Headers["X-Page-Size"] = pageSize.ToString();
+            Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
 
-            var payload = await dtoQuery
-                .OrderByDescending(x => x.Id)
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
+            var payload = await PaginationHelper.ApplyPaging(
+                    dtoQuery.OrderByDescending(x => x.Id),
+                    pageNumber,
+                    pageSize)
                 .ToListAsync();
 
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(

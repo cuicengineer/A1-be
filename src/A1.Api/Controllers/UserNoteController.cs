@@ -1,4 +1,5 @@
 using A1.Api.Models;
+using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -27,23 +28,21 @@ namespace A1.Api.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
         {
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 50;
-
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
             var baseQuery = _context.UserNotes.AsNoTracking();
 
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
-            Response.Headers["X-Page-Size"] = pageSize.ToString();
+            Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
 
-            var notes = await baseQuery
-                .OrderByDescending(n => n.UpdatedAt ?? DateTime.MinValue)
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
+            var notes = await PaginationHelper.ApplyPaging(
+                    baseQuery.OrderByDescending(n => n.UpdatedAt ?? DateTime.MinValue),
+                    pageNumber,
+                    pageSize)
                 .ToListAsync();
 
             return Ok(notes);

@@ -42,11 +42,9 @@ namespace A1.Api.Controllers
         /// Maps CmdId, BaseId, ClassId to their respective Name values
         /// </summary>
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
         {
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 50;
-
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
             var baseQuery = _context.SharingFormulas
                 .AsNoTracking()
@@ -57,10 +55,11 @@ namespace A1.Api.Controllers
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
-            Response.Headers["X-Page-Size"] = pageSize.ToString();
+            Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
 
             // Join with related tables to get names efficiently using left joins
-            var sharingFormulas = await (from sf in baseQuery
+            var sharingFormulasQuery =
+                from sf in baseQuery
                                        join cmd in _context.Commands.Where(c => c.IsDeleted == null || c.IsDeleted == false)
                                            on sf.CmdId equals cmd.Id into cmdGroup
                                        from cmd in cmdGroup.DefaultIfEmpty()
@@ -93,10 +92,10 @@ namespace A1.Api.Controllers
                                            sf.ActionBy,
                                            sf.Action,
                                            sf.IsDeleted
-                                       })
-                                       .Skip((pageNumber - 1) * pageSize)
-                                       .Take(pageSize)
-                                       .ToListAsync();
+                                       };
+
+            var sharingFormulas = await PaginationHelper.ApplyPaging(sharingFormulasQuery, pageNumber, pageSize)
+                .ToListAsync();
 
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
                 _context,

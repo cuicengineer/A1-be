@@ -17,6 +17,7 @@ namespace A1.Api.Models
         public string? GSTNo { get; set; }
         public bool Status { get; set; }
         public string? Remarks { get; set; }
+        public int? CoaId { get; set; }
     }
 }
 

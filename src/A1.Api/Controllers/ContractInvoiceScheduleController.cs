@@ -2,9 +2,11 @@ using A1.Api.Models;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.JsonWebTokens;
 using System.Data;
 using System.Data.Common;
 using System.Linq;
+using System.Security.Claims;
 
 namespace A1.Api.Controllers
 {
@@ -192,6 +194,12 @@ namespace A1.Api.Controllers
                 return Conflict("An invoice edit with this contractNo, invoiceNo, and subInvoiceNo already exists.");
             }
 
+            var lockedError = await GetLockedInvoiceEditErrorAsync(contractNo, invoiceNo, subInvoiceNo, existing, model);
+            if (lockedError != null)
+            {
+                return BadRequest(lockedError);
+            }
+
             var scopeError = await ValidateScopeAsync(model, existing);
             if (scopeError != null)
             {
@@ -245,6 +253,17 @@ namespace A1.Api.Controllers
 
             var existing = await FindEditAsync(contractNo, invoiceNo, subInvoiceNo);
 
+            if (IsInvoiceUnlocking(existing, model) && !await CanPrivilegedDeleteInvoiceAsync())
+            {
+                return Forbid();
+            }
+
+            var lockedError = await GetLockedInvoiceEditErrorAsync(contractNo, invoiceNo, subInvoiceNo, existing, model);
+            if (lockedError != null)
+            {
+                return BadRequest(lockedError);
+            }
+
             var invoiceDate = model.DueDate ?? model.PeriodEnd;
             if (await IsInvoiceDateLockedAsync(invoiceDate))
             {
@@ -281,6 +300,61 @@ namespace A1.Api.Controllers
         }
 
         /// <summary>
+        /// DELETE: Soft delete all invoice edit rows (header + line items) for ContractNo + InvoiceNo.
+        /// Route: DELETE /api/ContractInvoiceSchedule/{contractNo}/{invoiceNo}
+        /// Restricted to superuser or AHQ supervisor.
+        /// </summary>
+        [HttpDelete("{contractNo}/{invoiceNo}")]
+        public async Task<IActionResult> DeleteInvoice(
+            string contractNo,
+            string invoiceNo,
+            [FromBody] ContractInvoiceDeleteRequest? request = null)
+        {
+            if (!await CanPrivilegedDeleteInvoiceAsync())
+            {
+                return Forbid();
+            }
+
+            contractNo = contractNo?.Trim() ?? string.Empty;
+            invoiceNo = invoiceNo?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(contractNo) || string.IsNullOrWhiteSpace(invoiceNo))
+            {
+                return BadRequest("contractNo and invoiceNo are required.");
+            }
+
+            var rows = await _context.ContractInvoicesEdits
+                .Where(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && (x.IsDeleted == null || x.IsDeleted == false))
+                .ToListAsync();
+
+            if (rows.Count == 0)
+            {
+                return NotFound("Invoice not found.");
+            }
+
+            var headerRow = rows.FirstOrDefault(x => string.IsNullOrWhiteSpace(x.SubInvoiceNo));
+            if (headerRow?.IsLocked == true)
+            {
+                return BadRequest("Invoice is locked. Unlock it before deleting.");
+            }
+
+            var actionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request?.ActionBy);
+            var actionDate = DateTime.UtcNow;
+            foreach (var row in rows)
+            {
+                row.IsDeleted = true;
+                row.Action = "DELETE";
+                row.ActionDate = actionDate;
+                row.ActionBy = actionBy;
+            }
+
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        /// <summary>
         /// DELETE: Soft delete by ContractNo, InvoiceNo, and SubInvoiceNo.
         /// Route: DELETE /api/ContractInvoiceSchedule/{contractNo}/{invoiceNo}/{subInvoiceNo}
         /// </summary>
@@ -299,6 +373,12 @@ namespace A1.Api.Controllers
             if (existing == null || existing.IsDeleted == true)
             {
                 return NotFound("Invoice edit not found.");
+            }
+
+            var lockedError = await GetLockedInvoiceEditErrorAsync(contractNo, invoiceNo, subInvoiceNo, existing, null);
+            if (lockedError != null)
+            {
+                return BadRequest(lockedError);
             }
 
             existing.IsDeleted = true;
@@ -710,5 +790,84 @@ namespace A1.Api.Controllers
             p.Value = value.HasValue ? value.Value : DBNull.Value;
             command.Parameters.Add(p);
         }
+
+        private async Task<string?> GetLockedInvoiceEditErrorAsync(
+            string contractNo,
+            string invoiceNo,
+            string? subInvoiceNo,
+            ContractInvoicesEdit? existing,
+            ContractInvoicesEdit? source)
+        {
+            var header = await FindHeaderEditAsync(contractNo, invoiceNo);
+            if (header?.IsLocked != true)
+            {
+                return null;
+            }
+
+            var isHeaderRow = string.IsNullOrWhiteSpace(subInvoiceNo);
+            if (isHeaderRow && source != null && IsInvoiceUnlocking(existing, source))
+            {
+                return null;
+            }
+
+            return "Invoice is locked. Unlock it before editing.";
+        }
+
+        private async Task<ContractInvoicesEdit?> FindHeaderEditAsync(string contractNo, string invoiceNo)
+        {
+            return await _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && (x.SubInvoiceNo == null || x.SubInvoiceNo == "")
+                    && (x.IsDeleted == null || x.IsDeleted == false));
+        }
+
+        private static bool IsInvoiceUnlocking(ContractInvoicesEdit? existing, ContractInvoicesEdit source)
+        {
+            if (existing == null || existing.IsLocked != true)
+            {
+                return false;
+            }
+
+            return source.IsLocked != true;
+        }
+
+        private static bool IsInvoiceLockStateChanging(ContractInvoicesEdit? existing, ContractInvoicesEdit source)
+        {
+            var nextLocked = source.IsLocked == true;
+            if (existing == null)
+            {
+                return nextLocked;
+            }
+
+            return (existing.IsLocked == true) != nextLocked;
+        }
+
+        private static bool IsLoginSuperuser(ClaimsPrincipal user)
+        {
+            var loginName = user.FindFirstValue(JwtRegisteredClaimNames.UniqueName)
+                ?? user.FindFirstValue(ClaimTypes.Name)
+                ?? user.Identity?.Name;
+            return string.Equals(loginName?.Trim(), "superuser", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task<bool> CanPrivilegedDeleteInvoiceAsync()
+        {
+            if (IsLoginSuperuser(User))
+            {
+                return true;
+            }
+
+            var category = User.FindFirstValue("category");
+            return DataAccessScopeHelper.IsSupervisorCategory(category)
+                && await DataAccessScopeHelper.IsAhqUserAsync(User, _context);
+        }
+    }
+
+    public class ContractInvoiceDeleteRequest
+    {
+        public string? ActionBy { get; set; }
     }
 }

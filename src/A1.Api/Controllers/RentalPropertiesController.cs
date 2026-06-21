@@ -23,10 +23,9 @@ namespace A1.Api.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
         {
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 50;
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
             var baseQuery = _context.RentalProperties
                 .AsNoTracking()
@@ -37,9 +36,10 @@ namespace A1.Api.Controllers
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
-            Response.Headers["X-Page-Size"] = pageSize.ToString();
+            Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
 
-            var payload = await (from r in baseQuery
+            var payloadQuery =
+                from r in baseQuery
                                  join cmd in _context.Commands.Where(cmd => cmd.IsDeleted == null || cmd.IsDeleted == false)
                                      on r.CmdId equals cmd.Id into cmdGroup
                                  from cmd in cmdGroup.DefaultIfEmpty()
@@ -70,9 +70,9 @@ namespace A1.Api.Controllers
                                      ActionBy = r.ActionBy,
                                      Action = r.Action,
                                      IsDeleted = r.IsDeleted
-                                 })
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
+                                 };
+
+            var payload = await PaginationHelper.ApplyPaging(payloadQuery, pageNumber, pageSize)
                 .ToListAsync();
 
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(

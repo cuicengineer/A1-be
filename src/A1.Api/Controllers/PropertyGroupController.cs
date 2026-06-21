@@ -39,11 +39,9 @@ namespace A1.Api.Controllers
         /// Maps CmdId, BaseId, ClassId to their respective Name values
         /// </summary>
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
         {
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 50;
-
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
             var baseQuery = _context.PropertyGroups
                 .AsNoTracking()
@@ -54,10 +52,11 @@ namespace A1.Api.Controllers
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
-            Response.Headers["X-Page-Size"] = pageSize.ToString();
+            Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
 
             // Join with related tables to get names efficiently using left joins
-            var propertyGroups = await (from pg in baseQuery
+            var propertyGroupsQuery =
+                from pg in baseQuery
                                        join cmd in _context.Commands.Where(c => c.IsDeleted == null || c.IsDeleted == false)
                                            on pg.CmdId equals cmd.Id into cmdGroup
                                        from cmd in cmdGroup.DefaultIfEmpty()
@@ -89,9 +88,9 @@ namespace A1.Api.Controllers
                                            pg.ActionBy,
                                            pg.Action,
                                            pg.IsDeleted
-                                       })
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
+                                       };
+
+            var propertyGroups = await PaginationHelper.ApplyPaging(propertyGroupsQuery, pageNumber, pageSize)
                 .ToListAsync();
 
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
@@ -206,16 +205,14 @@ namespace A1.Api.Controllers
         /// GET /api/PropertyGroup/ByGroup/{grpId} - Get all linked properties for a group
         /// </summary>
         [HttpGet("ByGroup/{grpId}")]
-        public async Task<IActionResult> GetByGroupId(int grpId, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 100)
+        public async Task<IActionResult> GetByGroupId(int grpId, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
         {
             if (grpId <= 0)
             {
                 return BadRequest("Valid GrpId is required.");
             }
 
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 100;
-
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
             try
             {
@@ -257,12 +254,12 @@ namespace A1.Api.Controllers
                 var totalCount = await baseQuery.CountAsync();
                 Response.Headers["X-Total-Count"] = totalCount.ToString();
                 Response.Headers["X-Page-Number"] = pageNumber.ToString();
-                Response.Headers["X-Page-Size"] = pageSize.ToString();
+                Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
 
-                var linkings = await baseQuery
-                    .OrderByDescending(x => x.Id)
-                    .Skip((pageNumber - 1) * pageSize)
-                    .Take(pageSize)
+                var linkings = await PaginationHelper.ApplyPaging(
+                        baseQuery.OrderByDescending(x => x.Id),
+                        pageNumber,
+                        pageSize)
                     .ToListAsync();
 
                 var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
@@ -280,7 +277,9 @@ namespace A1.Api.Controllers
 
         /// <summary>
         /// GET: Returns rental properties for a given cmdId/baseId that are not linked in any active group
-        /// and also not part of any active contract.
+        /// and also not part of any active contract. Properties are included when they have a revenue rate,
+        /// or when the latest active Govt Share rate (configuration/govt-share-rate) for their class/base
+        /// uses Factor Annual Rent.
         /// Route: /api/PropertyGroup/NotGroupedProperties?cmdId=1&baseId=1&classId=4 (classId optional)
         /// </summary>
         [HttpGet("NotGroupedProperties")]
@@ -382,7 +381,21 @@ namespace A1.Api.Controllers
                 return Ok(availableProperties);
             }
 
+            var distinctClassIds = availableProperties
+                .Select(p => p.ClassId)
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            var annualRentClassIds = await GovtShareRateHelper.GetClassIdsWithAnnualRentFactorAsync(
+                _context,
+                cmdId,
+                baseId,
+                distinctClassIds,
+                today);
+
             // Step 2: Batch fetch latest active/non-deleted revenue rates for returned property ids.
+            // When Govt Share Factor is Annual Rent for the property's class/base, revenue rate is not required.
             var propertyIds = availableProperties.Select(p => p.Id).ToList();
             var rateRows = await _context.RevenueRates
                 .AsNoTracking()
@@ -406,7 +419,9 @@ namespace A1.Api.Controllers
                 }
             }
 
-            availableProperties = availableProperties.Where(p => rateByPropertyId.ContainsKey(p.Id)).ToList();
+            availableProperties = availableProperties
+                .Where(p => annualRentClassIds.Contains(p.ClassId) || rateByPropertyId.ContainsKey(p.Id))
+                .ToList();
 
             var response = availableProperties.Select(p => new
             {
@@ -680,6 +695,37 @@ namespace A1.Api.Controllers
             var hasNonDeletedContract = await _context.Contracts
                 .AsNoTracking()
                 .AnyAsync(c => c.GrpId == id && (c.IsDeleted == null || c.IsDeleted == false));
+
+            if (hasNonDeletedContract && IsLoginSuperuser(User))
+            {
+                var rateOnlyOldValuesJson = JsonSerializer.Serialize(new
+                {
+                    existingPropertyGroup.Rate
+                });
+
+                existingPropertyGroup.Rate = propertyGroup.Rate;
+                existingPropertyGroup.ActionDate = DateTime.UtcNow;
+                existingPropertyGroup.Action = "UPDATE";
+                existingPropertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, propertyGroup.ActionBy);
+
+                await _repository.UpdateAsync(existingPropertyGroup);
+
+                var rateOnlyNewValuesJson = JsonSerializer.Serialize(new
+                {
+                    existingPropertyGroup.Rate
+                });
+                await _auditLogService.LogAsync(new AuditLog
+                {
+                    EntityName = "PropertyGroup",
+                    EntityId = id,
+                    OldValuesJson = rateOnlyOldValuesJson,
+                    NewValuesJson = rateOnlyNewValuesJson,
+                    ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
+                    Action = "API"
+                });
+
+                return NoContent();
+            }
 
             if (hasNonDeletedContract && !IsLoginSuperuser(User))
             {

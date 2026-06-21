@@ -33,11 +33,9 @@ namespace A1.Api.Controllers
         /// Supports filtering by type query parameter
         /// </summary>
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50, [FromQuery] int? type = null)
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0, [FromQuery] int? type = null)
         {
-            if (pageNumber <= 0) pageNumber = 1;
-            if (pageSize <= 0) pageSize = 50;
-
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
             var baseQuery = _context.RentalValueGovtShareRates
                 .AsNoTracking()
@@ -54,12 +52,12 @@ namespace A1.Api.Controllers
             var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
-            Response.Headers["X-Page-Size"] = pageSize.ToString();
+            Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
 
-            var items = await baseQuery
-                .OrderByDescending(r => r.Id)
-                .Skip((pageNumber - 1) * pageSize)
-                .Take(pageSize)
+            var items = await PaginationHelper.ApplyPaging(
+                    baseQuery.OrderByDescending(r => r.Id),
+                    pageNumber,
+                    pageSize)
                 .ToListAsync();
 
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(

@@ -1,0 +1,9 @@
+IF COL_LENGTH('dbo.Suppliers', 'BankListsId') IS NULL
+    ALTER TABLE dbo.Suppliers ADD BankListsId INT NULL;
+IF COL_LENGTH('dbo.Suppliers', 'IBAN') IS NULL
+    ALTER TABLE dbo.Suppliers ADD IBAN NVARCHAR(34) NULL;
+
+IF COL_LENGTH('dbo.Customers', 'BankListsId') IS NULL
+    ALTER TABLE dbo.Customers ADD BankListsId INT NULL;
+IF COL_LENGTH('dbo.Customers', 'IBAN') IS NULL
+    ALTER TABLE dbo.Customers ADD IBAN NVARCHAR(34) NULL;

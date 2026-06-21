@@ -35,13 +35,25 @@ namespace A1.Api.Controllers
         /// GET: Get all bank lists (only returns records where IsDeleted = 0 or null)
         /// </summary>
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
         {
-            var bankLists = await _context.BankLists
+            pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
+
+            var baseQuery = _context.BankLists
                 .AsNoTracking()
-                .Where(b => b.IsDeleted == null || b.IsDeleted == false)
-                .OrderByDescending(b => b.Id)
+                .Where(b => b.IsDeleted == null || b.IsDeleted == false);
+
+            var totalCount = await baseQuery.CountAsync();
+            Response.Headers["X-Total-Count"] = totalCount.ToString();
+            Response.Headers["X-Page-Number"] = pageNumber.ToString();
+            Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
+
+            var bankLists = await PaginationHelper.ApplyPaging(
+                    baseQuery.OrderByDescending(b => b.Id),
+                    pageNumber,
+                    pageSize)
                 .ToListAsync();
+
             return Ok(bankLists);
         }
 

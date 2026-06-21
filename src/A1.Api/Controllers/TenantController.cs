@@ -168,6 +168,7 @@ namespace A1.Api.Controllers
             existingTenant.GSTNo = tenant.GSTNo;
             existingTenant.Status = tenant.Status;
             existingTenant.Remarks = tenant.Remarks;
+            existingTenant.CoaId = tenant.CoaId;
             existingTenant.ActionDate = DateTime.UtcNow;
             existingTenant.Action = "UPDATE";
             existingTenant.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, tenant.ActionBy);
@@ -233,6 +234,7 @@ namespace A1.Api.Controllers
                 tenant.GSTNo,
                 tenant.Status,
                 tenant.Remarks,
+                tenant.CoaId,
                 totalContracts,
                 totalInvoices = 0
             };

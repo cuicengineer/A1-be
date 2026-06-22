@@ -18,6 +18,8 @@ BEGIN
         Reference NVARCHAR(100) NULL,
         PaidFrom NVARCHAR(150) NULL,
         PayeeContactType NVARCHAR(50) NULL,
+        PayeePartyId INT NULL,
+        PayeePartyCode NVARCHAR(100) NULL,
         PayeeName NVARCHAR(300) NULL,
         Description NVARCHAR(500) NULL,
         GrandTotal DECIMAL(18, 2) NULL,
@@ -53,5 +55,17 @@ GO
 IF COL_LENGTH('dbo.Receipts', 'FinalizedByAhq') IS NULL
 BEGIN
     ALTER TABLE dbo.Receipts ADD FinalizedByAhq BIT NULL;
+END;
+GO
+
+IF COL_LENGTH('dbo.Receipts', 'PayeePartyId') IS NULL
+BEGIN
+    ALTER TABLE dbo.Receipts ADD PayeePartyId INT NULL;
+END;
+GO
+
+IF COL_LENGTH('dbo.Receipts', 'PayeePartyCode') IS NULL
+BEGIN
+    ALTER TABLE dbo.Receipts ADD PayeePartyCode NVARCHAR(100) NULL;
 END;
 GO

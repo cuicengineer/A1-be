@@ -8,6 +8,8 @@ namespace A1.Api.Models
         public string? Reference { get; set; }
         public string? PaidFrom { get; set; }
         public string? PayeeContactType { get; set; }
+        public int? PayeePartyId { get; set; }
+        public string? PayeePartyCode { get; set; }
         public string? PayeeName { get; set; }
         public string? Description { get; set; }
         public decimal? GrandTotal { get; set; }

@@ -100,6 +100,65 @@ namespace A1.Api.Controllers
         }
 
         /// <summary>
+        /// GET: Receipt-based share distribution rows using finalized AHQ receipts.
+        /// Route: GET /api/Contracts/ShareDistribution?asOfDate=2025-01-01
+        /// </summary>
+        [HttpGet("ShareDistribution")]
+        public async Task<IActionResult> GetShareDistribution(
+            [FromQuery] DateTime asOfDate,
+            CancellationToken cancellationToken = default)
+        {
+            if (asOfDate == default)
+            {
+                return BadRequest("asOfDate query parameter is required.");
+            }
+
+            await using var connection = _context.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+            {
+                await connection.OpenAsync(cancellationToken);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "dbo.sp_GetShareDistributionFromFinalizedReceipts";
+            command.CommandType = CommandType.StoredProcedure;
+
+            var param = command.CreateParameter();
+            param.ParameterName = "@AsOfDate";
+            param.DbType = DbType.Date;
+            param.Value = asOfDate.Date;
+            command.Parameters.Add(param);
+
+            command.CommandTimeout = 120;
+
+            var results = new List<Dictionary<string, object?>>();
+
+            await using var reader = await command.ExecuteReaderAsync(
+                CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
+                cancellationToken);
+
+            var fieldCount = reader.FieldCount;
+            var names = new string[fieldCount];
+            for (int i = 0; i < fieldCount; i++)
+            {
+                names[i] = reader.GetName(i);
+            }
+
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < fieldCount; i++)
+                {
+                    var value = reader.GetValue(i);
+                    row[names[i]] = value == DBNull.Value ? null : value;
+                }
+                results.Add(row);
+            }
+
+            return Ok(results);
+        }
+
+        /// <summary>
         /// GET: Get all contracts (only returns records where IsDeleted = 0 or null)
         /// Maps CmdId, BaseId, ClassId, GrpId to their respective Name values
         /// Supports pagination with pageNumber and pageSize query parameters
@@ -171,6 +230,7 @@ namespace A1.Api.Controllers
                                        c.IncreaseRatePercent,
                                        c.IncreaseIntervalMonths,
                                        c.SDRateMonths,
+                                       c.PaymentTiming,
                                        c.SecurityDepositAmount,
                                        c.RentalValue,
                                        c.GovtShare,
@@ -266,6 +326,7 @@ namespace A1.Api.Controllers
                                        c.IncreaseRatePercent,
                                        c.IncreaseIntervalMonths,
                                        c.SDRateMonths,
+                                       c.PaymentTiming,
                                        c.SecurityDepositAmount,
                                        c.RentalValue,
                                        c.GovtShare,
@@ -434,6 +495,7 @@ namespace A1.Api.Controllers
                                        c.IncreaseRatePercent,
                                        c.IncreaseIntervalMonths,
                                        c.SDRateMonths,
+                                       c.PaymentTiming,
                                        c.SecurityDepositAmount,
                                        c.RentalValue,
                                        c.GovtShare,
@@ -517,6 +579,7 @@ namespace A1.Api.Controllers
                 existingContract.IncreaseRatePercent,
                 existingContract.IncreaseIntervalMonths,
                 existingContract.SDRateMonths,
+                existingContract.PaymentTiming,
                 existingContract.SecurityDepositAmount,
                 existingContract.RentalValue,
                 existingContract.GovtShare,
@@ -559,6 +622,7 @@ namespace A1.Api.Controllers
             existingContract.IncreaseRatePercent = contract.IncreaseRatePercent;
             existingContract.IncreaseIntervalMonths = contract.IncreaseIntervalMonths;
             existingContract.SDRateMonths = contract.SDRateMonths;
+            existingContract.PaymentTiming = contract.PaymentTiming;
             existingContract.SecurityDepositAmount = contract.SecurityDepositAmount;
             existingContract.RentalValue = contract.RentalValue;
             existingContract.GovtShare = contract.GovtShare;
@@ -646,6 +710,7 @@ namespace A1.Api.Controllers
                 existingContract.IncreaseRatePercent,
                 existingContract.IncreaseIntervalMonths,
                 existingContract.SDRateMonths,
+                existingContract.PaymentTiming,
                 existingContract.SecurityDepositAmount,
                 existingContract.RentalValue,
                 existingContract.GovtShare,

@@ -24,6 +24,7 @@ namespace A1.Api.Models
         public decimal? IncreaseRatePercent { get; set; }
         public int? IncreaseIntervalMonths { get; set; }
         public int? SDRateMonths { get; set; }
+        public string? PaymentTiming { get; set; }
         public decimal? SecurityDepositAmount { get; set; }
         public decimal? RentalValue { get; set; }
         public decimal? GovtShare { get; set; }

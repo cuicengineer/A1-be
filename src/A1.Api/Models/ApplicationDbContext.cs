@@ -283,6 +283,7 @@ namespace A1.Api.Models
                 e.Property(x => x.Reference).HasMaxLength(100);
                 e.Property(x => x.PaidFrom).HasMaxLength(150);
                 e.Property(x => x.PayeeContactType).HasMaxLength(50);
+                e.Property(x => x.PayeePartyCode).HasMaxLength(100);
                 e.Property(x => x.PayeeName).HasMaxLength(300);
                 e.Property(x => x.Description).HasMaxLength(500);
                 e.Property(x => x.GrandTotal).HasColumnType("decimal(18,2)");

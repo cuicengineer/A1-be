@@ -1,3 +1,5 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using A1.Api.Models;
 using A1.Api.Repositories;
 using A1.Api.Utilities;
@@ -37,6 +39,11 @@ namespace A1.Api.Controllers
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CustomerRank entity)
         {
+            if (!await CanManageRanksAsync())
+            {
+                return Forbid();
+            }
+
             if (entity == null) return BadRequest("Rank data is required.");
 
             var rankName = (entity.RankName ?? "").Trim();
@@ -60,6 +67,92 @@ namespace A1.Api.Controllers
 
             await _repository.AddAsync(entity);
             return CreatedAtAction(nameof(GetAll), entity);
+        }
+
+        [HttpPut("{id}")]
+        public async Task<IActionResult> Update(int id, [FromBody] CustomerRank entity)
+        {
+            if (!await CanManageRanksAsync())
+            {
+                return Forbid();
+            }
+
+            if (entity == null) return BadRequest("Rank data is required.");
+
+            var existing = await _context.CustomerRanks
+                .FirstOrDefaultAsync(x => x.Id == id && (x.IsDeleted == null || x.IsDeleted == false));
+
+            if (existing == null)
+            {
+                return NotFound("Rank not found.");
+            }
+
+            var rankName = (entity.RankName ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(rankName))
+                return BadRequest("Rank name is required.");
+
+            var duplicate = await _context.CustomerRanks
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    x.Id != id &&
+                    (x.IsDeleted == null || x.IsDeleted == false) &&
+                    x.RankName == rankName);
+
+            if (duplicate)
+                return Conflict("This rank already exists.");
+
+            existing.RankName = rankName;
+            existing.ActionDate = DateTime.UtcNow;
+            existing.Action = "UPDATE";
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, entity.ActionBy);
+
+            await _repository.UpdateAsync(existing);
+            return NoContent();
+        }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(int id)
+        {
+            if (!await CanManageRanksAsync())
+            {
+                return Forbid();
+            }
+
+            var existing = await _context.CustomerRanks
+                .FirstOrDefaultAsync(x => x.Id == id && (x.IsDeleted == null || x.IsDeleted == false));
+
+            if (existing == null)
+            {
+                return NotFound("Rank not found.");
+            }
+
+            existing.IsDeleted = true;
+            existing.Action = "DELETE";
+            existing.ActionDate = DateTime.UtcNow;
+            existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
+
+            _context.CustomerRanks.Update(existing);
+            await _context.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+        private static bool IsLoginSuperuser(ClaimsPrincipal user)
+        {
+            var loginName = user.FindFirstValue(JwtRegisteredClaimNames.UniqueName)
+                ?? user.FindFirstValue(ClaimTypes.Name)
+                ?? user.Identity?.Name;
+            return string.Equals(loginName?.Trim(), "superuser", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task<bool> CanManageRanksAsync()
+        {
+            if (IsLoginSuperuser(User))
+            {
+                return true;
+            }
+
+            return await DataAccessScopeHelper.IsAhqSupervisorAsync(User, _context);
         }
     }
 }

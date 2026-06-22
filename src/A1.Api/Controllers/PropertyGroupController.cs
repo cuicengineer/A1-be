@@ -247,7 +247,19 @@ namespace A1.Api.Controllers
                             GrpId = x.linking.GrpId,
                             PropId = x.linking.PropId,
                             GroupName = x.group.GId ?? string.Empty,
-                            PropertyName = prop != null ? prop.PId ?? string.Empty : string.Empty
+                            PropertyName = prop != null ? prop.PId ?? string.Empty : string.Empty,
+                            Price = x.linking.Price ?? _context.RevenueRates
+                                .AsNoTracking()
+                                .Where(rr => rr.PropertyId == x.linking.PropId
+                                             && (rr.IsDeleted == null || rr.IsDeleted == false)
+                                             && rr.Status == true
+                                             && rr.DeactiveDate == null
+                                             && rr.Rate != null)
+                                .OrderByDescending(rr => rr.ApplicableDate)
+                                .ThenByDescending(rr => rr.Id)
+                                .Select(rr => rr.Rate)
+                                .FirstOrDefault(),
+                            Area = x.linking.Area ?? (prop != null ? prop.Area : null)
                         }
                     );
 

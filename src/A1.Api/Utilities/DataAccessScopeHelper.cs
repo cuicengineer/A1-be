@@ -414,6 +414,46 @@ namespace A1.Api.Utilities
             return IsAhqLabel(command.Name) || IsAhqLabel(command.Abb);
         }
 
+        public static async Task<bool> IsAhqSupervisorAsync(ClaimsPrincipal principal, ApplicationDbContext context)
+        {
+            var category = await ResolveUserCategoryAsync(principal, context);
+            return IsSupervisorCategory(category) && await IsAhqUserAsync(principal, context);
+        }
+
+        private static async Task<string?> ResolveUserCategoryAsync(ClaimsPrincipal principal, ApplicationDbContext context)
+        {
+            var category = principal.FindFirstValue("category");
+            if (!string.IsNullOrWhiteSpace(category))
+            {
+                return category;
+            }
+
+            var userId = TryParseIntClaim(principal, JwtRegisteredClaimNames.Sub)
+                         ?? TryParseIntClaim(principal, ClaimTypes.NameIdentifier);
+            if (userId.HasValue)
+            {
+                return await context.Users
+                    .AsNoTracking()
+                    .Where(u => u.Id == userId.Value)
+                    .Select(u => u.Category)
+                    .FirstOrDefaultAsync();
+            }
+
+            var username = principal.FindFirstValue(JwtRegisteredClaimNames.UniqueName)
+                           ?? principal.FindFirstValue(ClaimTypes.Name)
+                           ?? principal.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(username))
+            {
+                return null;
+            }
+
+            return await context.Users
+                .AsNoTracking()
+                .Where(u => u.Username == username)
+                .Select(u => u.Category)
+                .FirstOrDefaultAsync();
+        }
+
         /// <summary>
         /// Power users and AHQ supervisors see the full dashboard summary (no Cmd/Base SP filters).
         /// </summary>
@@ -423,7 +463,7 @@ namespace A1.Api.Utilities
         {
             var category = principal.FindFirstValue("category");
             if (string.Equals(category, "Power", StringComparison.OrdinalIgnoreCase)
-                || (IsSupervisorCategory(category) && await IsAhqUserAsync(principal, context)))
+                || await IsAhqSupervisorAsync(principal, context))
             {
                 return true;
             }

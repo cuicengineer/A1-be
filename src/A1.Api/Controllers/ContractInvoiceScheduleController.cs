@@ -860,9 +860,7 @@ namespace A1.Api.Controllers
                 return true;
             }
 
-            var category = User.FindFirstValue("category");
-            return DataAccessScopeHelper.IsSupervisorCategory(category)
-                && await DataAccessScopeHelper.IsAhqUserAsync(User, _context);
+            return await DataAccessScopeHelper.IsAhqSupervisorAsync(User, _context);
         }
     }
 

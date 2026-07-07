@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace A1.Api.Models
 {
     public class Receipt : BaseEntity
@@ -16,5 +18,17 @@ namespace A1.Api.Models
         public string? LinesJson { get; set; }
         public string? AttachmentsJson { get; set; }
         public bool? FinalizedByAhq { get; set; }
+
+        /// <summary>Receipt or Payment — used to share the Receipts table.</summary>
+        public string? RecordType { get; set; }
+
+        /// <summary>Payment voucher number (e.g. TE-0001/2025).</summary>
+        public string? VrNo { get; set; }
+
+        /// <summary>Cash &amp; Bank account the payment is received from.</summary>
+        public int? CashAndBankAccountId { get; set; }
+
+        [NotMapped]
+        public string? ReceivedFromAccountDisplay { get; set; }
     }
 }

@@ -213,6 +213,7 @@ namespace A1.Api.Controllers
                 existing.InvoiceNo = invoiceNo;
                 existing.SubInvoiceNo = subInvoiceNo;
                 ApplyInvoiceModel(existing, model, isCreate: true);
+                await EnsureSubInvoiceNoWhenFinalizedAsync(existing, model);
                 await _context.SaveChangesAsync();
                 return Ok(existing);
             }
@@ -225,6 +226,7 @@ namespace A1.Api.Controllers
                 CreatedAt = DateTime.UtcNow
             };
             ApplyInvoiceModel(created, model, isCreate: true);
+            await EnsureSubInvoiceNoWhenFinalizedAsync(created, model);
             await _context.ContractInvoicesEdits.AddAsync(created);
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetByInvoiceNo), new { invoiceNo }, created);
@@ -252,8 +254,15 @@ namespace A1.Api.Controllers
             }
 
             var existing = await FindEditAsync(contractNo, invoiceNo, subInvoiceNo);
+            var isHeaderRow = string.IsNullOrWhiteSpace(subInvoiceNo);
+            var headerRow = isHeaderRow ? await FindHeaderEditAsync(contractNo, invoiceNo) : null;
 
-            if (IsInvoiceUnlocking(existing, model) && !await CanPrivilegedDeleteInvoiceAsync())
+            if (isHeaderRow && model.IgnoreLockDate)
+            {
+                await NormalizePrivilegedGridLockPayloadAsync(contractNo, invoiceNo, model);
+            }
+
+            if (IsInvoiceUnlocking(headerRow ?? existing, model) && !await CanPrivilegedDeleteInvoiceAsync())
             {
                 return Forbid();
             }
@@ -265,7 +274,7 @@ namespace A1.Api.Controllers
             }
 
             var invoiceDate = model.DueDate ?? model.PeriodEnd;
-            if (await IsInvoiceDateLockedAsync(invoiceDate))
+            if (!model.IgnoreLockDate && await IsInvoiceDateLockedAsync(invoiceDate))
             {
                 return BadRequest("Date Locked");
             }
@@ -282,6 +291,12 @@ namespace A1.Api.Controllers
                 existing.InvoiceNo = invoiceNo;
                 existing.SubInvoiceNo = subInvoiceNo;
                 ApplyInvoiceModel(existing, model, isCreate: false);
+                await EnsureSubInvoiceNoWhenFinalizedAsync(existing, model);
+                if (isHeaderRow && (model.IgnoreLockDate || IsInvoiceLockStateChanging(headerRow ?? existing, model)))
+                {
+                    await SyncInvoiceLockStateAsync(contractNo, invoiceNo, model.IsLocked);
+                }
+
                 await _context.SaveChangesAsync();
                 return Ok(existing);
             }
@@ -294,6 +309,12 @@ namespace A1.Api.Controllers
                 CreatedAt = DateTime.UtcNow
             };
             ApplyInvoiceModel(created, model, isCreate: true);
+            await EnsureSubInvoiceNoWhenFinalizedAsync(created, model);
+            if (isHeaderRow && model.IsLocked.HasValue)
+            {
+                await SyncInvoiceLockStateAsync(contractNo, invoiceNo, model.IsLocked);
+            }
+
             await _context.ContractInvoicesEdits.AddAsync(created);
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetByInvoiceNo), new { invoiceNo }, created);
@@ -334,8 +355,8 @@ namespace A1.Api.Controllers
                 return NotFound("Invoice not found.");
             }
 
-            var headerRow = rows.FirstOrDefault(x => string.IsNullOrWhiteSpace(x.SubInvoiceNo));
-            if (headerRow?.IsLocked == true)
+            var lockedRow = await FindLockedInvoiceRowAsync(contractNo, invoiceNo);
+            if (lockedRow?.IsLocked == true)
             {
                 return BadRequest("Invoice is locked. Unlock it before deleting.");
             }
@@ -398,12 +419,15 @@ namespace A1.Api.Controllers
             var isHeaderRow = string.IsNullOrWhiteSpace(subInvoiceNo);
             return await _context.ContractInvoicesEdits
                 .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(x =>
+                .Where(x =>
                     x.ContractNo == contractNo
                     && x.InvoiceNo == invoiceNo
+                    && (x.IsDeleted == null || x.IsDeleted == false)
                     && (isHeaderRow
                         ? x.SubInvoiceNo == null || x.SubInvoiceNo == ""
-                        : (x.SubInvoiceNo ?? string.Empty) == subInvoiceNo));
+                        : (x.SubInvoiceNo ?? string.Empty) == subInvoiceNo))
+                .OrderByDescending(x => x.Id)
+                .FirstOrDefaultAsync();
         }
 
         private static bool TryNormalizeKeys(
@@ -517,7 +541,7 @@ namespace A1.Api.Controllers
             target.ItemwithCode = source.ItemwithCode;
             target.Description = source.Description;
             target.AccHead = source.AccHead;
-            target.Discount = source.Discount;
+            target.Discount = source.Discount ?? 0;
             target.SortOrder = source.SortOrder;
             target.Remarks = source.Remarks;
             target.ContractStartDate = source.ContractStartDate;
@@ -554,6 +578,23 @@ namespace A1.Api.Controllers
                 ? (isCreate ? "CREATE" : "UPDATE")
                 : source.Action;
             target.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, source.ActionBy);
+        }
+
+        /// <summary>
+        /// When a header invoice row is finalized, ensure SubInvoiceNo is "1" so
+        /// sp_GetContractInvoiceSchedule can join ContractInvoicesEdit (SubInvoiceNo = 1).
+        /// </summary>
+        private static Task EnsureSubInvoiceNoWhenFinalizedAsync(
+            ContractInvoicesEdit target,
+            ContractInvoicesEdit source)
+        {
+            if (source.IsFinalized != true || !string.IsNullOrWhiteSpace(target.SubInvoiceNo))
+            {
+                return Task.CompletedTask;
+            }
+
+            target.SubInvoiceNo = "1";
+            return Task.CompletedTask;
         }
 
         private async Task<(IActionResult? Error, int? CmdId, int? BaseId)> ApplyScheduleScopeFiltersAsync(
@@ -630,7 +671,7 @@ namespace A1.Api.Controllers
             int? baseId,
             CancellationToken cancellationToken)
         {
-            await using var connection = _context.Database.GetDbConnection();
+            var connection = _context.Database.GetDbConnection();
             if (connection.State != ConnectionState.Open)
             {
                 await connection.OpenAsync(cancellationToken);
@@ -650,30 +691,109 @@ namespace A1.Api.Controllers
 
             var results = new List<Dictionary<string, object?>>();
 
-            await using var reader = await command.ExecuteReaderAsync(
-                CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
-                cancellationToken);
-
-            var fieldCount = reader.FieldCount;
-            var names = new string[fieldCount];
-            for (int i = 0; i < fieldCount; i++)
+            await using (var reader = await command.ExecuteReaderAsync(
+                CommandBehavior.SequentialAccess,
+                cancellationToken))
             {
-                names[i] = reader.GetName(i);
-            }
-
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
+                var fieldCount = reader.FieldCount;
+                var names = new string[fieldCount];
                 for (int i = 0; i < fieldCount; i++)
                 {
-                    var value = reader.GetValue(i);
-                    row[names[i]] = value == DBNull.Value ? null : value;
+                    names[i] = reader.GetName(i);
                 }
 
-                results.Add(row);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
+                    for (int i = 0; i < fieldCount; i++)
+                    {
+                        var value = reader.GetValue(i);
+                        row[names[i]] = value == DBNull.Value ? null : value;
+                    }
+
+                    results.Add(row);
+                }
             }
 
+            await OverlayFinalizedFlagsFromHeaderEditsAsync(results, cancellationToken);
             return results;
+        }
+
+        /// <summary>
+        /// sp_GetContractInvoiceSchedule joins edits on SubInvoiceNo = 1 only. Header rows finalized
+        /// after the first invoice on a contract may have NULL SubInvoiceNo, so patch IsFinalized here.
+        /// </summary>
+        private async Task OverlayFinalizedFlagsFromHeaderEditsAsync(
+            List<Dictionary<string, object?>> rows,
+            CancellationToken cancellationToken)
+        {
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            var unresolved = rows
+                .Where(row => !RowIsFinalized(row))
+                .Select(row => new
+                {
+                    ContractNo = ReadRowString(row, "ContractNo"),
+                    InvoiceNo = ReadRowString(row, "InvoiceNo"),
+                })
+                .Where(key => !string.IsNullOrWhiteSpace(key.ContractNo) && !string.IsNullOrWhiteSpace(key.InvoiceNo))
+                .Distinct()
+                .ToList();
+
+            if (unresolved.Count == 0)
+            {
+                return;
+            }
+
+            var contractNos = unresolved
+                .Select(key => key.ContractNo)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var invoiceNos = unresolved
+                .Select(key => key.InvoiceNo)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var finalizedEdits = await _context.ContractInvoicesEdits
+                .AsNoTracking()
+                .Where(x =>
+                    contractNos.Contains(x.ContractNo)
+                    && invoiceNos.Contains(x.InvoiceNo)
+                    && x.IsFinalized == true
+                    && (x.IsDeleted == null || x.IsDeleted == false)
+                    && (x.SubInvoiceNo == null
+                        || x.SubInvoiceNo == ""
+                        || x.SubInvoiceNo == "1"))
+                .Select(x => new { x.ContractNo, x.InvoiceNo })
+                .ToListAsync(cancellationToken);
+
+            if (finalizedEdits.Count == 0)
+            {
+                return;
+            }
+
+            var finalizedKeys = new HashSet<string>(
+                finalizedEdits.Select(x => $"{x.ContractNo}|{x.InvoiceNo}"),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var row in rows)
+            {
+                if (RowIsFinalized(row))
+                {
+                    continue;
+                }
+
+                var key = $"{ReadRowString(row, "ContractNo")}|{ReadRowString(row, "InvoiceNo")}";
+                if (!finalizedKeys.Contains(key))
+                {
+                    continue;
+                }
+
+                row["IsFinalized"] = 1;
+            }
         }
 
         private static List<Dictionary<string, object?>> FilterScheduleRows(
@@ -798,14 +918,14 @@ namespace A1.Api.Controllers
             ContractInvoicesEdit? existing,
             ContractInvoicesEdit? source)
         {
-            var header = await FindHeaderEditAsync(contractNo, invoiceNo);
-            if (header?.IsLocked != true)
+            var lockedRow = await FindLockedInvoiceRowAsync(contractNo, invoiceNo);
+            if (lockedRow?.IsLocked != true)
             {
                 return null;
             }
 
             var isHeaderRow = string.IsNullOrWhiteSpace(subInvoiceNo);
-            if (isHeaderRow && source != null && IsInvoiceUnlocking(existing, source))
+            if (isHeaderRow && source != null && IsInvoiceUnlocking(lockedRow, source))
             {
                 return null;
             }
@@ -817,11 +937,67 @@ namespace A1.Api.Controllers
         {
             return await _context.ContractInvoicesEdits
                 .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(x =>
+                .Where(x =>
                     x.ContractNo == contractNo
                     && x.InvoiceNo == invoiceNo
                     && (x.SubInvoiceNo == null || x.SubInvoiceNo == "")
-                    && (x.IsDeleted == null || x.IsDeleted == false));
+                    && (x.IsDeleted == null || x.IsDeleted == false))
+                .OrderByDescending(x => x.Id)
+                .FirstOrDefaultAsync();
+        }
+
+        private async Task<ContractInvoicesEdit?> FindLockedInvoiceRowAsync(string contractNo, string invoiceNo)
+        {
+            var rows = await _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && x.IsLocked == true
+                    && (x.IsDeleted == null || x.IsDeleted == false))
+                .OrderByDescending(x => x.Id)
+                .ToListAsync();
+
+            if (rows.Count == 0)
+            {
+                return null;
+            }
+
+            return rows.FirstOrDefault(x => string.IsNullOrWhiteSpace(x.SubInvoiceNo)) ?? rows[0];
+        }
+
+        private async Task SyncInvoiceLockStateAsync(string contractNo, string invoiceNo, bool? isLocked)
+        {
+            var rows = await _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && (x.IsDeleted == null || x.IsDeleted == false))
+                .ToListAsync();
+
+            foreach (var row in rows)
+            {
+                row.IsLocked = isLocked;
+            }
+        }
+
+        /// <summary>
+        /// Grid lock icon sends a full invoice snapshot; IsLocked may still reflect the current row state.
+        /// Privileged users toggle lock on the server when IgnoreLockDate is set.
+        /// </summary>
+        private async Task NormalizePrivilegedGridLockPayloadAsync(
+            string contractNo,
+            string invoiceNo,
+            ContractInvoicesEdit model)
+        {
+            if (!await CanPrivilegedDeleteInvoiceAsync())
+            {
+                return;
+            }
+
+            var currentlyLocked = (await FindLockedInvoiceRowAsync(contractNo, invoiceNo))?.IsLocked == true;
+            model.IsLocked = !currentlyLocked;
         }
 
         private static bool IsInvoiceUnlocking(ContractInvoicesEdit? existing, ContractInvoicesEdit source)

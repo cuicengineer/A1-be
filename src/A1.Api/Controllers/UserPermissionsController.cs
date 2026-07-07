@@ -25,7 +25,7 @@ namespace A1.Api.Controllers
             _configuration = configuration;
         }
 
-        [HttpGet("GetInfo/{pakno}")]
+        [HttpGet("GetInfo/")]
         public async Task<IActionResult> GetInfo(string pakno)
         {
             if (string.IsNullOrWhiteSpace(pakno))
@@ -33,15 +33,22 @@ namespace A1.Api.Controllers
                 return BadRequest("pakno is required.");
             }
 
-            var endpoint = _configuration["ExternalApis:GetInfoUrl"];
+            var isAirman = pakno.Length > 5;
+            var endpoint = _configuration[isAirman ? "ExternalApis:GetInfoUrlAirman" : "ExternalApis:GetInfoUrl"];
             if (string.IsNullOrWhiteSpace(endpoint))
             {
-                return StatusCode(500, "GetInfo API URL is not configured.");
+                return StatusCode(500, isAirman
+                    ? "GetInfo Airman API URL is not configured."
+                    : "GetInfo API URL is not configured.");
             }
 
-            var payload = JsonSerializer.Serialize(new { pakno });
-            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = await _httpClient.PostAsync(endpoint, content);
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{endpoint}{pakno}");
+            if (isAirman)
+            {
+                request.Headers.Add("x-api-key", "$du@cce$$");
+            }
+
+            using var response = await _httpClient.SendAsync(request);
             var responseBody = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)

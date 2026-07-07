@@ -118,7 +118,12 @@ namespace A1.Api.Controllers
             // Set IsDeleted = false by default
             tenant.IsDeleted = false;
             tenant.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, tenant.ActionBy);
-            // ActionDate and Action will be set by the repository
+
+            var coaError = PartyControlAccountValidation.ValidateDualCoaIds(tenant.CoaId, tenant.CoaId2);
+            if (coaError != null)
+            {
+                return BadRequest(coaError);
+            }
 
             await _repository.AddAsync(tenant);
             return CreatedAtAction(nameof(GetById), new { id = tenant.Id }, tenant);
@@ -169,9 +174,16 @@ namespace A1.Api.Controllers
             existingTenant.Status = tenant.Status;
             existingTenant.Remarks = tenant.Remarks;
             existingTenant.CoaId = tenant.CoaId;
+            existingTenant.CoaId2 = tenant.CoaId2;
             existingTenant.ActionDate = DateTime.UtcNow;
             existingTenant.Action = "UPDATE";
             existingTenant.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, tenant.ActionBy);
+
+            var coaError = PartyControlAccountValidation.ValidateDualCoaIds(existingTenant.CoaId, existingTenant.CoaId2);
+            if (coaError != null)
+            {
+                return BadRequest(coaError);
+            }
 
             await _repository.UpdateAsync(existingTenant);
             return NoContent();
@@ -235,6 +247,7 @@ namespace A1.Api.Controllers
                 tenant.Status,
                 tenant.Remarks,
                 tenant.CoaId,
+                tenant.CoaId2,
                 totalContracts,
                 totalInvoices = 0
             };

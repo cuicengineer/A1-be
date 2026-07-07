@@ -1,0 +1,299 @@
+USE [A1Lands]
+GO
+/****** Object:  UserDefinedFunction [dbo].[fn_GetContractInvoiceSchedule]    Script Date: 01/07/2026 12:02:42 pm ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER FUNCTION [dbo].[fn_GetContractInvoiceSchedule]
+(
+)
+RETURNS TABLE
+AS
+RETURN
+(
+    /* =========================================================
+       1. BASE CONTRACTS
+    ========================================================= */
+    WITH Contracts AS
+    (
+        SELECT *
+        FROM dbo.Contracts c
+        WHERE ISNULL(c.IsDeleted,0) = 0 --and c.ApprovalStatus = 1
+    ),
+
+    /* =========================================================
+       2. TALLY (controls max invoice cycles)
+    ========================================================= */
+    Tally AS
+    (
+        SELECT TOP (200)
+            ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1 AS n
+        FROM sys.all_objects
+    ),
+
+    /* =========================================================
+       3. GENERATE BILLING PERIODS
+       (PURE CONTRACT DRIVEN - NO INPUT PARAMETER)
+    ========================================================= */
+    BillingPeriods AS
+    (
+        SELECT
+            c.Id AS ContractId, c.CmdId, c.BaseId, c.ClassId,
+            c.ContractNo,  c.ContractStartDate, c.ContractEndDate, c.BusinessName, c.InitialRentPM,
+			c.PaymentTermMonths, c.RiseTermType, cast(c.IncreaseIntervalMonths as varchar(10)) + ' Months' as RiseTerm, c.IncreaseRatePercent as RiseRate,
+			c.RiseDate, 'Start of Period' as InvoiceDateType,
+           
+
+            DATEADD(MONTH, t.n * c.PaymentTermMonths, c.ContractStartDate) AS PeriodStart,
+            DATEADD(MONTH, (t.n + 1) * c.PaymentTermMonths, c.ContractStartDate) AS PeriodEnd,
+
+            t.n + 1 AS InvoiceSeq
+        FROM Contracts c
+        JOIN Tally t
+            ON DATEADD(MONTH, t.n * c.PaymentTermMonths, c.ContractStartDate)
+               <= c.ContractEndDate
+			   where  c.IsDeleted = 0
+    ),
+
+    /* =========================================================
+       4. CLAMP TO CONTRACT END DATE
+    ========================================================= */
+    Clamped AS
+    (
+        SELECT
+            b.ContractId,b.ContractNo,
+            b.InvoiceSeq,
+			 b.ContractStartDate,b.ContractEndDate, b.BusinessName, b.InitialRentPM,
+			b.PaymentTermMonths, b.RiseTermType, b.RiseTerm, b.RiseRate,
+			b.RiseDate,  b.InvoiceDateType,b.CmdId, b.BaseId, b.ClassId
+            ,
+            CASE
+                WHEN b.PeriodStart < c.ContractStartDate THEN c.ContractStartDate
+                ELSE b.PeriodStart
+            END AS PeriodStart,
+
+            CASE
+                WHEN b.PeriodEnd > c.ContractEndDate THEN c.ContractEndDate
+                ELSE b.PeriodEnd
+            END AS PeriodEnd
+        FROM BillingPeriods b
+        JOIN Contracts c ON c.Id = b.ContractId
+        WHERE b.PeriodStart <= c.ContractEndDate 
+		and c.IsDeleted = 0
+    ),
+
+    /* =========================================================
+       5. APPLY RENT ENGINE (YOUR FUNCTION)
+       ========================================================= */
+    RentApplied AS
+    (
+        SELECT
+            c.*,
+            r.CalculatedRentPM,
+            r.CalculatedRentPA
+        FROM Clamped c
+        CROSS APPLY dbo.fn_GetRunningContractsRentAsOfDate(c.PeriodStart) r
+        WHERE r.ContractId = c.ContractId
+    ),
+
+    /* =========================================================
+       6. DETECT RENT CHANGE BETWEEN PERIODS
+    ========================================================= */
+    Ordered AS
+    (
+        SELECT
+            *,
+            LAG(CalculatedRentPM) OVER
+            (
+                PARTITION BY ContractId
+                ORDER BY PeriodStart
+            ) AS PrevRentPM
+        FROM RentApplied
+    ),
+
+    /* =========================================================
+       7. MARK SEGMENTS
+    ========================================================= */
+    Segments AS
+    (
+        SELECT
+            *,
+            CASE
+                WHEN PrevRentPM IS NULL THEN 1
+                WHEN PrevRentPM <> CalculatedRentPM THEN 1
+                ELSE 0
+            END AS IsNewSegment
+        FROM Ordered
+    ),
+
+    /* =========================================================
+       8. FINAL OUTPUT (INVOICE READY)
+    ========================================================= */
+   Final AS
+(
+    SELECT  
+        ContractId,
+        ContractNo,
+
+        CONCAT(FORMAT(InvoiceSeq,'000'), '-', ContractNo) AS InvoiceNo,
+
+        PeriodStart,
+        CASE
+    WHEN PeriodEnd = ContractEndDate
+        THEN PeriodEnd
+    ELSE DATEADD(DAY, -1, PeriodEnd)
+END AS PeriodEnd,
+		DATEFROMPARTS(
+    YEAR(DATEADD(DAY, 1, PeriodStart)),
+    MONTH(DATEADD(DAY, 1, PeriodStart)),
+    10
+) DueDate,
+
+        DATEDIFF(MONTH, PeriodStart, DATEADD(DAY,1,PeriodEnd)) AS Months,
+
+cast(CalculatedRentPM as int) CalculatedRentPM,
+
+cast(
+    DATEDIFF(MONTH, PeriodStart, DATEADD(DAY,1,PeriodEnd))
+    * CalculatedRentPM
+as int) AS TotalRent,
+
+        /* =====================================================
+           NEW: RENTER CHANGE REMARKS
+        ===================================================== */
+        CASE
+            WHEN PrevRentPM IS NULL THEN NULL
+
+            WHEN PrevRentPM = 0 THEN
+                'New rent introduced: ' + cast( CAST(CalculatedRentPM AS int) as varchar(40))
+
+            WHEN CalculatedRentPM <> PrevRentPM THEN
+                'Rent increased by ' +
+                CAST(
+                  cast(  ROUND(
+                        ((CalculatedRentPM - PrevRentPM) * 100.0) / NULLIF(PrevRentPM,0),
+                        0
+                    ) as int ) 
+                AS VARCHAR(40)) + '%'
+
+            ELSE NULL
+        END AS Remarks,ContractStartDate,ContractEndDate,CONVERT(VARCHAR(10), ContractStartDate, 120) 
++ 'To' + 
+CONVERT(VARCHAR(10), ContractEndDate, 120) as ContractPeriod, BusinessName, cast(InitialRentPM as int) InitialRentPM ,
+			PaymentTermMonths, RiseTermType,  RiseTerm, cast(cast(RiseRate as int) as varchar(10)) + '%' as RiseRate,
+			RiseDate, InvoiceDateType,CmdId, BaseId, ClassId
+            , 0 as AmountReceived, 0 as AmountReceivable, 0 as Pending, 'Unpaid' as InvoiceStatus
+
+    FROM Segments
+)
+
+select * from (
+   SELECT 
+    COALESCE(e.Id, f.ContractId) AS Id,
+    f.ContractId,
+
+    f.ContractNo,
+    f.InvoiceNo,
+
+    COALESCE(e.PeriodStart, f.PeriodStart) AS PeriodStart,
+    COALESCE(e.PeriodEnd, f.PeriodEnd) AS PeriodEnd,
+    COALESCE(e.DueDate, f.DueDate) AS DueDate,
+
+    COALESCE(e.Months, f.Months) AS Months,
+
+    COALESCE(e.CalculatedRentPM, f.CalculatedRentPM) AS CalculatedRentPM,
+    COALESCE(e.TotalRent, f.TotalRent) AS TotalRent,
+
+    COALESCE(e.Remarks, f.Remarks) AS Remarks,
+
+    COALESCE(e.ContractStartDate, f.ContractStartDate) AS ContractStartDate,
+    COALESCE(e.ContractEndDate, f.ContractEndDate) AS ContractEndDate,
+    COALESCE(e.ContractPeriod, f.ContractPeriod) AS ContractPeriod,
+
+    COALESCE(e.BusinessName, f.BusinessName) AS BusinessName,
+
+    COALESCE(e.InitialRentPM, f.InitialRentPM) AS InitialRentPM,
+    COALESCE(e.PaymentTermMonths, f.PaymentTermMonths) AS PaymentTermMonths,
+    COALESCE(e.RiseTermType, f.RiseTermType) AS RiseTermType,
+    COALESCE(e.RiseTerm, f.RiseTerm) AS RiseTerm,
+    COALESCE(e.RiseRate, f.RiseRate) AS RiseRate,
+    COALESCE(e.RiseDate, f.RiseDate) AS RiseDate,
+
+    COALESCE(e.InvoiceDateType, f.InvoiceDateType) AS InvoiceDateType,
+
+    COALESCE(e.CmdId, f.CmdId) AS CmdId,
+    COALESCE(e.BaseId, f.BaseId) AS BaseId,
+    COALESCE(e.ClassId, f.ClassId) AS ClassId,
+
+    COALESCE(e.AmountReceived, rc.AmountReceived, f.AmountReceived) AS AmountReceived, --COALESCE(e.AmountReceived, f.AmountReceived) AS AmountReceived,
+    COALESCE(et.TotalRent, f.TotalRent) AS AmountReceivable,
+    COALESCE(e.AmountPending, f.Pending) AS AmountPending,
+
+    COALESCE(e.InvoiceStatus, f.InvoiceStatus) AS InvoiceStatus
+	-- Coming Due, Days Overdue are colored text set
+	,  ISNULL(e.IsFinalized,0) as IsFinalized , 
+	isnull(e.Description, FORMAT(COALESCE(e.PeriodStart, f.PeriodStart), 'MMM-yyyy')
++ ' To ' +
+FORMAT(COALESCE(e.PeriodEnd, f.PeriodEnd), 'MMM-yyyy')) AS Description,
+0 as daystodue, 0 as daysoverdue,
+ISNULL(e.IsLocked, 0 )  IsLocked
+FROM Final f
+    LEFT OUTER JOIN dbo.ContractInvoicesEdit e
+        ON e.ContractNo = f.ContractNo
+       AND e.InvoiceNo = f.InvoiceNo
+       AND ISNULL(e.InvoiceStatus,'') <> 'Deleted'
+       AND ISNULL(e.IsDeleted,0) = 0
+       AND (
+            e.SubInvoiceNo = 1
+            OR e.SubInvoiceNo = '1'
+            OR (
+                (e.SubInvoiceNo IS NULL OR LTRIM(RTRIM(e.SubInvoiceNo)) = '')
+                AND ISNULL(e.IsFinalized, 0) = 1
+            )
+       )
+
+    LEFT JOIN
+(
+    SELECT
+        InvoiceNo,
+        SUM(TotalRent) AS TotalRent
+    FROM dbo.ContractInvoicesEdit
+    WHERE ISNULL(InvoiceStatus,'') <> 'Deleted'
+      AND IsDeleted = 0
+    GROUP BY InvoiceNo
+) et
+    ON et.InvoiceNo = f.InvoiceNo
+	LEFT JOIN
+(
+    SELECT
+        ContractNo,
+        InvoiceNo,
+        AmountReceived
+    FROM
+    (
+        SELECT
+            ContractNo,
+            InvoiceNo,
+            Amount as AmountReceived,
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY ContractNo, InvoiceNo
+                ORDER BY Id
+            ) AS RN
+        FROM dbo.[CollectionEntries]
+        WHERE ISNULL(IsDeleted,0) = 0
+    ) x
+    WHERE RN = 1
+) rc
+    ON rc.ContractNo = f.ContractNo
+   AND rc.InvoiceNo = f.InvoiceNo
+   ) cc OUTER APPLY
+(
+    SELECT rr.TenantNo , rr.RentalValueRate, t.TenantNo + ' ' + t.Prefix as Prefix, t.OwnerName, t.Address, rr.commercialoperationdate as Cod
+    FROM dbo.fn_BasicContractInfo(CAST(cc.PeriodStart AS DATE)) rr
+	left join Tenants t on t.TenantNo = rr.tenantNo
+    WHERE rr.Id = cc.ContractId and t.IsDeleted =0 
+) rr
+);

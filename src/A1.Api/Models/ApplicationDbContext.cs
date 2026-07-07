@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using System.Linq.Expressions;
 
 namespace A1.Api.Models
@@ -27,6 +28,9 @@ namespace A1.Api.Models
         public DbSet<UserNote> UserNotes { get; set; }
         public DbSet<SharingFormula> SharingFormulas { get; set; }
         public DbSet<BankList> BankLists { get; set; }
+        public DbSet<Currency> Currencies { get; set; }
+        public DbSet<ExchangeRate> ExchangeRates { get; set; }
+        public DbSet<InterAccTransfer> InterAccTransfers { get; set; }
         public DbSet<PropertyType> PropertyTypes { get; set; }
         public DbSet<AuditLog> AuditLogs { get; set; }
         public DbSet<UserPermission> UserPermissions { get; set; }
@@ -47,8 +51,17 @@ namespace A1.Api.Models
         public DbSet<SupplierCodePrefix> SupplierCodePrefixes { get; set; }
         public DbSet<Customer> Customers { get; set; }
         public DbSet<CustomerRank> CustomerRanks { get; set; }
+        public DbSet<Dealer> Dealers { get; set; }
         public DbSet<CollectionEntry> CollectionEntries { get; set; }
+        public DbSet<ShareDistributionWorkbookAssignment> ShareDistributionWorkbookAssignments { get; set; }
         public DbSet<Receipt> Receipts { get; set; }
+        public DbSet<CashAndBank> CashAndBanks { get; set; }
+        public DbSet<ProductService> ProductServices { get; set; }
+        public DbSet<ProductGood> ProductGoods { get; set; }
+        public DbSet<ProductUom> ProductUoms { get; set; }
+        public DbSet<TaxCode> TaxCodes { get; set; }
+        public DbSet<SalesReturn> SalesReturns { get; set; }
+        public DbSet<PurchaseReturn> PurchaseReturns { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -199,6 +212,7 @@ namespace A1.Api.Models
             {
                 e.ToTable("Suppliers", "dbo");
                 e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+                e.Property(x => x.DealerId);
                 e.Property(x => x.Prefix).HasMaxLength(20);
                 e.Property(x => x.Rank).HasMaxLength(100);
                 e.Property(x => x.Name).HasMaxLength(200).IsRequired();
@@ -236,6 +250,7 @@ namespace A1.Api.Models
             {
                 e.ToTable("Customers", "dbo");
                 e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+                e.Property(x => x.DealerId);
                 e.Property(x => x.Prefix).HasMaxLength(20);
                 e.Property(x => x.Rank).HasMaxLength(100);
                 e.Property(x => x.Name).HasMaxLength(200).IsRequired();
@@ -260,17 +275,51 @@ namespace A1.Api.Models
                 e.Property(x => x.ActionBy).HasMaxLength(150);
             });
 
+            modelBuilder.Entity<Dealer>(e =>
+            {
+                e.ToTable("Dealers", "dbo");
+                e.Property(x => x.Code).HasMaxLength(30);
+                e.Property(x => x.Prefix).HasMaxLength(20);
+                e.Property(x => x.Rank).HasMaxLength(100);
+                e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Address).HasMaxLength(500);
+                e.Property(x => x.Province).HasMaxLength(50);
+                e.Property(x => x.City).HasMaxLength(100);
+                e.Property(x => x.NtnCnic).HasMaxLength(50);
+                e.Property(x => x.GSTNo).HasMaxLength(50);
+                e.Property(x => x.TelNo).HasMaxLength(50);
+                e.Property(x => x.MobileNo).HasMaxLength(50);
+                e.Property(x => x.Representative).HasMaxLength(150);
+                e.Property(x => x.IBAN).HasMaxLength(34);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
             modelBuilder.Entity<CollectionEntry>(e =>
             {
                 e.ToTable("CollectionEntries", "dbo");
                 e.Property(x => x.ContractNo).HasMaxLength(50);
+                e.Property(x => x.TenantNo).HasMaxLength(50);
                 e.Property(x => x.TenantBusiness).HasMaxLength(300);
                 e.Property(x => x.InvoiceNo).HasMaxLength(100);
+                e.Property(x => x.ReceivableAmount).HasColumnType("decimal(18,2)");
                 e.Property(x => x.DueAmount).HasColumnType("decimal(18,2)");
                 e.Property(x => x.BalanceAmount).HasColumnType("decimal(18,2)");
                 e.Property(x => x.CollectionDate).HasColumnType("date");
                 e.Property(x => x.Amount).HasColumnType("decimal(18,2)");
                 e.Property(x => x.TinTrn).HasMaxLength(100);
+                e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.VrNo).HasMaxLength(100);
+                e.Property(x => x.VrDate).HasColumnType("date");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ShareDistributionWorkbookAssignment>(e =>
+            {
+                e.ToTable("ShareDistributionWorkbookAssignments", "dbo");
+                e.Property(x => x.WorkbookNo).HasMaxLength(30).IsRequired();
+                e.Property(x => x.WorkbookCreatedDate).HasColumnType("date");
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
             });
@@ -289,6 +338,8 @@ namespace A1.Api.Models
                 e.Property(x => x.GrandTotal).HasColumnType("decimal(18,2)");
                 e.Property(x => x.LinesJson).HasColumnType("nvarchar(max)");
                 e.Property(x => x.AttachmentsJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.RecordType).HasMaxLength(20);
+                e.Property(x => x.VrNo).HasMaxLength(50);
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
             });
@@ -303,6 +354,148 @@ namespace A1.Api.Models
                 e.ToTable("Bases", "dbo");
                 e.Property(x => x.FullName).HasColumnType("varchar(500)");
                 e.Property(x => x.Code).HasColumnType("nchar(10)").IsFixedLength();
+            });
+
+            modelBuilder.Entity<ProductService>(e =>
+            {
+                e.ToTable("ProductServices", "dbo");
+                e.Property(x => x.ItemCode).HasMaxLength(50).IsRequired();
+                e.Property(x => x.ItemName).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Uom).HasMaxLength(20);
+                e.Property(x => x.DefaultParticulars).HasMaxLength(500);
+                e.Property(x => x.DefaultUnitPriceSales).HasColumnType("decimal(18,2)");
+                e.Property(x => x.DefaultUnitPricePurchase).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ProductGood>(e =>
+            {
+                e.ToTable("ProductGoods", "dbo");
+                e.Property(x => x.ItemCode).HasMaxLength(50).IsRequired();
+                e.Property(x => x.ItemName).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Uom).HasMaxLength(20);
+                e.Property(x => x.DefaultParticulars).HasMaxLength(500);
+                e.Property(x => x.DefaultUnitPriceSales).HasColumnType("decimal(18,2)");
+                e.Property(x => x.DefaultUnitPricePurchase).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ProductUom>(e =>
+            {
+                e.ToTable("ProductUoms", "dbo");
+                e.Property(x => x.Code).HasMaxLength(20).IsRequired();
+                e.Property(x => x.Name).HasMaxLength(100);
+                e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<TaxCode>(e =>
+            {
+                e.ToTable("TaxCodes", "dbo");
+                e.Property(x => x.Code).HasMaxLength(50).IsRequired();
+                e.Property(x => x.Description).HasMaxLength(200);
+                e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<InterAccTransfer>(e =>
+            {
+                e.ToTable("InterAccTransfers", "dbo");
+                e.Property(x => x.TransferDate).HasColumnType("date");
+                e.Property(x => x.VrNo).HasMaxLength(50).IsRequired();
+                e.Property(x => x.Description).HasMaxLength(15);
+                e.Property(x => x.Particulars).HasMaxLength(500);
+                e.Property(x => x.SettlementVrNo).HasMaxLength(50);
+                e.Property(x => x.PaidFromAmount).HasColumnType("decimal(18,2)");
+                e.Property(x => x.ReceivedInAmount).HasColumnType("decimal(18,2)");
+                e.Property(x => x.TinFtn).HasMaxLength(50);
+                e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ExchangeRate>(e =>
+            {
+                e.ToTable("ExchangeRates", "dbo");
+                e.Property(x => x.RateDate).HasColumnType("date");
+                e.Property(x => x.Rate).HasColumnType("decimal(18,6)");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<Currency>(e =>
+            {
+                e.ToTable("Currencies", "dbo");
+                e.Property(x => x.Code).HasMaxLength(10).IsRequired();
+                e.Property(x => x.Name).HasMaxLength(100).IsRequired();
+                e.Property(x => x.CurrencyType).HasColumnName("Type").HasMaxLength(20).IsRequired();
+                e.Property(x => x.DecimalPlaces).IsRequired();
+                e.Property(x => x.Status)
+                    .HasConversion(
+                        new ValueConverter<byte?, bool?>(
+                            v => v.HasValue ? v.Value != 0 : null,
+                            v => v.HasValue ? (byte?)(v.Value ? 1 : 0) : null));
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<CashAndBank>(e =>
+            {
+                e.ToTable("CashAndBanks", "dbo");
+                e.Property(x => x.AcctId).HasMaxLength(50);
+                e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Currency).HasMaxLength(50).IsRequired();
+                e.Property(x => x.Mode).HasMaxLength(20).IsRequired();
+                e.Property(x => x.IBAN).HasMaxLength(34);
+                e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+                e.HasOne<CashAndBank>()
+                    .WithMany()
+                    .HasForeignKey(x => x.ParentCashAndBankId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<SalesReturn>(e =>
+            {
+                e.ToTable("SalesReturns", "dbo");
+                e.Property(x => x.Date).HasColumnType("date");
+                e.Property(x => x.VrNo).HasMaxLength(50);
+                e.Property(x => x.ContractCustomerKey).HasMaxLength(100);
+                e.Property(x => x.ContractCustomerLabel).HasMaxLength(500);
+                e.Property(x => x.ContractNo).HasMaxLength(50);
+                e.Property(x => x.InvoiceKey).HasMaxLength(150);
+                e.Property(x => x.InvoiceNo).HasMaxLength(50);
+                e.Property(x => x.InvoiceLabel).HasMaxLength(300);
+                e.Property(x => x.Description).HasMaxLength(500);
+                e.Property(x => x.GrandTotal).HasColumnType("decimal(18,2)");
+                e.Property(x => x.LinesJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.AttachmentsJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<PurchaseReturn>(e =>
+            {
+                e.ToTable("PurchaseReturns", "dbo");
+                e.Property(x => x.Date).HasColumnType("date");
+                e.Property(x => x.VrNo).HasMaxLength(50);
+                e.Property(x => x.SupplierKey).HasMaxLength(100);
+                e.Property(x => x.SupplierLabel).HasMaxLength(500);
+                e.Property(x => x.SupplierCode).HasMaxLength(50);
+                e.Property(x => x.PurchaseInvoiceNo).HasMaxLength(100);
+                e.Property(x => x.PurchaseInvoiceLabel).HasMaxLength(300);
+                e.Property(x => x.Description).HasMaxLength(500);
+                e.Property(x => x.GrandTotal).HasColumnType("decimal(18,2)");
+                e.Property(x => x.LinesJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
             });
 
             modelBuilder.Entity<BankAccount>(e =>

@@ -100,5 +100,9 @@ namespace A1.Api.Models
 
         /// <summary>When true, invoice appears finalized in sp_GetContractInvoiceSchedule (header row: SubInvoiceNo null).</summary>
         public bool? IsFinalized { get; set; }
+
+        /// <summary>When true, skip configured lock-date validation (grid lock/unlock icon only).</summary>
+        [NotMapped]
+        public bool IgnoreLockDate { get; set; }
     }
 }

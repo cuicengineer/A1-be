@@ -100,7 +100,7 @@ namespace A1.Api.Controllers
         }
 
         /// <summary>
-        /// GET: Receipt-based share distribution rows using finalized AHQ receipts.
+        /// GET: Share distribution rows from received collection entries.
         /// Route: GET /api/Contracts/ShareDistribution?asOfDate=2025-01-01
         /// </summary>
         [HttpGet("ShareDistribution")]
@@ -131,31 +131,103 @@ namespace A1.Api.Controllers
 
             command.CommandTimeout = 120;
 
-            var results = new List<Dictionary<string, object?>>();
+            var results = new List<ShareDistributionRow>();
 
             await using var reader = await command.ExecuteReaderAsync(
                 CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
                 cancellationToken);
 
-            var fieldCount = reader.FieldCount;
-            var names = new string[fieldCount];
-            for (int i = 0; i < fieldCount; i++)
-            {
-                names[i] = reader.GetName(i);
-            }
-
             while (await reader.ReadAsync(cancellationToken))
             {
-                var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < fieldCount; i++)
-                {
-                    var value = reader.GetValue(i);
-                    row[names[i]] = value == DBNull.Value ? null : value;
-                }
-                results.Add(row);
+                results.Add(ShareDistributionRowMapper.Map(reader));
             }
 
             return Ok(results);
+        }
+
+        /// <summary>
+        /// POST: Assign a new share-distribution workbook number to selected contracts.
+        /// Route: POST /api/Contracts/ShareDistribution/Workbooks
+        /// </summary>
+        [HttpPost("ShareDistribution/Workbooks")]
+        public async Task<IActionResult> CreateShareDistributionWorkbook(
+            [FromBody] ShareDistributionWorkbookCreateRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var contractIds = (request?.ContractIds ?? new List<int>())
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            if (contractIds.Count == 0)
+            {
+                return BadRequest("At least one contract must be selected.");
+            }
+
+            var existingContracts = await _context.Contracts
+                .AsNoTracking()
+                .Where(c => contractIds.Contains(c.Id) && (c.IsDeleted == null || c.IsDeleted == false))
+                .Select(c => c.Id)
+                .ToListAsync(cancellationToken);
+
+            if (existingContracts.Count != contractIds.Count)
+            {
+                return BadRequest("One or more selected contracts could not be found.");
+            }
+
+            var existingAssignments = await _context.ShareDistributionWorkbookAssignments
+                .Where(x => contractIds.Contains(x.ContractId) && (x.IsDeleted == null || x.IsDeleted == false))
+                .ToListAsync(cancellationToken);
+
+            var alreadyAssignedIds = existingAssignments
+                .Where(x => !string.IsNullOrWhiteSpace(x.WorkbookNo))
+                .Select(x => x.ContractId)
+                .ToList();
+
+            if (alreadyAssignedIds.Count > 0)
+            {
+                return BadRequest(
+                    "One or more selected contracts already have a workbook assigned and cannot be reassigned.");
+            }
+
+            var maxSerial = await _context.ShareDistributionWorkbookAssignments
+                .Where(x => x.IsDeleted == null || x.IsDeleted == false)
+                .Select(x => (int?)x.WorkbookSerial)
+                .MaxAsync(cancellationToken) ?? 0;
+
+            var createdDate = DateTime.UtcNow.Date;
+            var serial = maxSerial + 1;
+            var workbookNo = ShareDistributionWorkbookNumberHelper.FormatWorkbookNumber(serial, createdDate);
+            var actionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, null);
+            var actionDate = DateTime.UtcNow;
+
+            foreach (var contractId in contractIds)
+            {
+                await _context.ShareDistributionWorkbookAssignments.AddAsync(
+                    new ShareDistributionWorkbookAssignment
+                    {
+                        ContractId = contractId,
+                        WorkbookNo = workbookNo,
+                        WorkbookSerial = serial,
+                        WorkbookCreatedDate = createdDate,
+                        Action = "CREATE",
+                        ActionBy = actionBy,
+                        ActionDate = actionDate,
+                        IsDeleted = false,
+                    },
+                    cancellationToken);
+            }
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return Ok(new
+            {
+                workbookNo,
+                workbookSerial = serial,
+                workbookCreatedDate = createdDate.ToString("yyyy-MM-dd"),
+                assignedCount = contractIds.Count,
+                contractIds,
+            });
         }
 
         /// <summary>

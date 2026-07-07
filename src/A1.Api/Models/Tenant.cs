@@ -18,6 +18,7 @@ namespace A1.Api.Models
         public bool Status { get; set; }
         public string? Remarks { get; set; }
         public int? CoaId { get; set; }
+        public int? CoaId2 { get; set; }
     }
 }
 

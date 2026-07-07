@@ -66,6 +66,7 @@ namespace A1.Api.Controllers
             entry.ActionDate = DateTime.UtcNow;
             entry.Action = "CREATE";
             entry.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, entry.ActionBy);
+            ApplyComputedAmounts(entry);
 
             await _repository.AddAsync(entry);
             return CreatedAtAction(nameof(GetById), new { id = entry.Id }, entry);
@@ -104,14 +105,21 @@ namespace A1.Api.Controllers
             existing.ClassId = entry.ClassId;
             existing.ContractId = entry.ContractId;
             existing.ContractNo = entry.ContractNo;
+            existing.TenantNo = entry.TenantNo;
             existing.TenantBusiness = entry.TenantBusiness;
             existing.CoaId = entry.CoaId;
             existing.InvoiceNo = entry.InvoiceNo;
+            existing.ReceivableAmount = entry.ReceivableAmount;
             existing.DueAmount = entry.DueAmount;
             existing.BalanceAmount = entry.BalanceAmount;
             existing.CollectionDate = entry.CollectionDate;
             existing.Amount = entry.Amount;
             existing.TinTrn = entry.TinTrn;
+            existing.Status = entry.Status;
+            existing.VrNo = entry.VrNo;
+            existing.VrDate = entry.VrDate;
+            existing.ReceiptId = entry.ReceiptId;
+            ApplyComputedAmounts(existing);
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, entry.ActionBy);
@@ -140,14 +148,26 @@ namespace A1.Api.Controllers
             return NoContent();
         }
 
+        private static void ApplyComputedAmounts(CollectionEntry entry)
+        {
+            var receivable = entry.ReceivableAmount ?? 0m;
+            var amount = entry.Amount ?? 0m;
+            entry.BalanceAmount = receivable - amount;
+            entry.DueAmount = entry.BalanceAmount > 0 ? entry.BalanceAmount : 0m;
+        }
+
         private static string? ValidateEntry(CollectionEntry entry)
         {
-            if (entry.ClassId == null || entry.ClassId <= 0) return "Class is required.";
-            if (entry.ContractId == null || entry.ContractId <= 0) return "Agreement is required.";
-            if (string.IsNullOrWhiteSpace(entry.ContractNo)) return "ContractNo is required.";
-            if (string.IsNullOrWhiteSpace(entry.InvoiceNo)) return "InvoiceNo is required.";
-            if (entry.CollectionDate == null) return "CollectionDate is required.";
-            if (entry.Amount == null || entry.Amount < 0) return "Amount is required.";
+            var hasTenant =
+                !string.IsNullOrWhiteSpace(entry.TenantNo) ||
+                !string.IsNullOrWhiteSpace(entry.TenantBusiness);
+            if (!hasTenant) return "Tenant and Business is required.";
+            if (entry.CoaId == null) return "Account is required.";
+            if (entry.Amount != null && entry.Amount < 0)
+            {
+                return "Amount must be greater than or equal to 0.";
+            }
+
             return null;
         }
     }

@@ -12,11 +12,11 @@ namespace A1.Api.Controllers
     [ApiController]
     public class CustomerRanksController : ControllerBase
     {
-        private readonly IGenericRepository<CustomerRank> _repository;
+        private readonly IGenericRepository<SupplierRank> _repository;
         private readonly ApplicationDbContext _context;
 
         public CustomerRanksController(
-            IGenericRepository<CustomerRank> repository,
+            IGenericRepository<SupplierRank> repository,
             ApplicationDbContext context)
         {
             _repository = repository;
@@ -26,7 +26,7 @@ namespace A1.Api.Controllers
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
-            var rows = await _context.CustomerRanks
+            var rows = await _context.SupplierRanks
                 .AsNoTracking()
                 .Where(x => x.IsDeleted == null || x.IsDeleted == false)
                 .OrderBy(x => x.RankName)
@@ -37,7 +37,7 @@ namespace A1.Api.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> Create([FromBody] CustomerRank entity)
+        public async Task<IActionResult> Create([FromBody] SupplierRank entity)
         {
             if (!await CanManageRanksAsync())
             {
@@ -50,7 +50,7 @@ namespace A1.Api.Controllers
             if (string.IsNullOrWhiteSpace(rankName))
                 return BadRequest("Rank name is required.");
 
-            var duplicate = await _context.CustomerRanks
+            var duplicate = await _context.SupplierRanks
                 .AsNoTracking()
                 .AnyAsync(x =>
                     (x.IsDeleted == null || x.IsDeleted == false) &&
@@ -70,7 +70,7 @@ namespace A1.Api.Controllers
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> Update(int id, [FromBody] CustomerRank entity)
+        public async Task<IActionResult> Update(int id, [FromBody] SupplierRank entity)
         {
             if (!await CanManageRanksAsync())
             {
@@ -79,7 +79,7 @@ namespace A1.Api.Controllers
 
             if (entity == null) return BadRequest("Rank data is required.");
 
-            var existing = await _context.CustomerRanks
+            var existing = await _context.SupplierRanks
                 .FirstOrDefaultAsync(x => x.Id == id && (x.IsDeleted == null || x.IsDeleted == false));
 
             if (existing == null)
@@ -91,7 +91,7 @@ namespace A1.Api.Controllers
             if (string.IsNullOrWhiteSpace(rankName))
                 return BadRequest("Rank name is required.");
 
-            var duplicate = await _context.CustomerRanks
+            var duplicate = await _context.SupplierRanks
                 .AsNoTracking()
                 .AnyAsync(x =>
                     x.Id != id &&
@@ -118,7 +118,7 @@ namespace A1.Api.Controllers
                 return Forbid();
             }
 
-            var existing = await _context.CustomerRanks
+            var existing = await _context.SupplierRanks
                 .FirstOrDefaultAsync(x => x.Id == id && (x.IsDeleted == null || x.IsDeleted == false));
 
             if (existing == null)
@@ -131,7 +131,7 @@ namespace A1.Api.Controllers
             existing.ActionDate = DateTime.UtcNow;
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
 
-            _context.CustomerRanks.Update(existing);
+            _context.SupplierRanks.Update(existing);
             await _context.SaveChangesAsync();
 
             return NoContent();

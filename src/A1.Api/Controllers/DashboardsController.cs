@@ -21,10 +21,12 @@ namespace A1.Api.Controllers
         /// <summary>
         /// GET: Loads dbo.GetPropertyDashboardSummary. Each returned result set becomes one JSON array of row objects (column names from the result set).
         /// Uses the DbContext connection only (no second connection); streams rows with SequentialAccess.
-        /// Route: GET /api/Dashboards/property-summary
+        /// Route: GET /api/Dashboards/property-summary?asOfDate=2025-01-01
         /// </summary>
         [HttpGet("property-summary")]
-        public async Task<IActionResult> GetPropertyDashboardSummary(CancellationToken cancellationToken = default)
+        public async Task<IActionResult> GetPropertyDashboardSummary(
+            [FromQuery] DateTime? asOfDate,
+            CancellationToken cancellationToken = default)
         {
             await using var connection = _context.Database.GetDbConnection();
             if (connection.State != ConnectionState.Open)
@@ -66,6 +68,11 @@ namespace A1.Api.Controllers
                 }
             }
 
+            if (asOfDate.HasValue)
+            {
+                AddDateParameter(command, "@AsOfDate", asOfDate.Value.Date);
+            }
+
             await using var reader = await command.ExecuteReaderAsync(
                 CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
                 cancellationToken).ConfigureAwait(false);
@@ -96,6 +103,15 @@ namespace A1.Api.Controllers
             p.ParameterName = name;
             p.DbType = DbType.Int32;
             p.Value = value.HasValue ? value.Value : DBNull.Value;
+            command.Parameters.Add(p);
+        }
+
+        private static void AddDateParameter(DbCommand command, string name, DateTime value)
+        {
+            var p = command.CreateParameter();
+            p.ParameterName = name;
+            p.DbType = DbType.Date;
+            p.Value = value;
             command.Parameters.Add(p);
         }
 

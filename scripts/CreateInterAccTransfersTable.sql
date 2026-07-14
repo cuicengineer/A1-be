@@ -11,7 +11,7 @@ BEGIN
         Id                   INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
         TransferDate         DATE           NOT NULL,
         VrNo                 NVARCHAR(50)   NOT NULL,
-        Description          NVARCHAR(15)   NULL,
+        Description          NVARCHAR(35)   NULL,
         Particulars          NVARCHAR(500)  NULL,
         PaidFromAccountId    INT            NOT NULL,
         SettlementVrNo       NVARCHAR(50)   NULL,

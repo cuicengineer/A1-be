@@ -477,7 +477,41 @@ namespace A1.Api.Controllers
                 return BadRequest("Contract data is required.");
             }
 
+            var contractNo = (contract.ContractNo ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(contractNo))
+            {
+                var duplicateExists = await _context.Contracts
+                    .AsNoTracking()
+                    .AnyAsync(c =>
+                        c.ContractNo == contractNo
+                        && (c.IsDeleted == null || c.IsDeleted == false));
+
+                if (duplicateExists)
+                {
+                    return Conflict(
+                        $"Contract No \"{contractNo}\" already exists. Delete the existing contract first to reuse this Contract No.");
+                }
+
+                // Soft-deleted rows may still hold the same ContractNo under a unique index — free them so reuse works.
+                var softDeletedSameContractNo = await _context.Contracts
+                    .Where(c => c.ContractNo == contractNo && c.IsDeleted == true)
+                    .ToListAsync();
+                if (softDeletedSameContractNo.Count > 0)
+                {
+                    foreach (var oldContract in softDeletedSameContractNo)
+                    {
+                        if (!string.IsNullOrWhiteSpace(oldContract.ContractNo)
+                            && oldContract.ContractNo.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            oldContract.ContractNo = $"{oldContract.ContractNo.Trim()}#DEL#{oldContract.Id}";
+                        }
+                    }
+                    await _context.SaveChangesAsync();
+                }
+            }
+
             // Set IsDeleted = false by default
+            contract.ContractNo = contractNo;
             contract.IsDeleted = false;
             contract.Fiscal = (contract.ContractStartDate.Month >= 6
                 ? $"{contract.ContractStartDate.Year}-{(contract.ContractStartDate.Year + 1).ToString().Substring(2)}"
@@ -628,6 +662,39 @@ namespace A1.Api.Controllers
                 return NotFound("Contract not found.");
             }
 
+            var updatedContractNo = (contract.ContractNo ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(updatedContractNo))
+            {
+                var duplicateExists = await _context.Contracts
+                    .AsNoTracking()
+                    .AnyAsync(c =>
+                        c.Id != id
+                        && c.ContractNo == updatedContractNo
+                        && (c.IsDeleted == null || c.IsDeleted == false));
+
+                if (duplicateExists)
+                {
+                    return Conflict(
+                        $"Contract No \"{updatedContractNo}\" already exists. Delete the existing contract first to reuse this Contract No.");
+                }
+
+                var softDeletedSameContractNo = await _context.Contracts
+                    .Where(c => c.Id != id && c.ContractNo == updatedContractNo && c.IsDeleted == true)
+                    .ToListAsync();
+                if (softDeletedSameContractNo.Count > 0)
+                {
+                    foreach (var oldContract in softDeletedSameContractNo)
+                    {
+                        if (!string.IsNullOrWhiteSpace(oldContract.ContractNo)
+                            && oldContract.ContractNo.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            oldContract.ContractNo = $"{oldContract.ContractNo.Trim()}#DEL#{oldContract.Id}";
+                        }
+                    }
+                    await _context.SaveChangesAsync();
+                }
+            }
+
             var oldValuesJson = JsonSerializer.Serialize(new
             {
                 existingContract.ContractNo,
@@ -673,7 +740,7 @@ namespace A1.Api.Controllers
             });
 
             // Update properties efficiently
-            existingContract.ContractNo = contract.ContractNo;
+            existingContract.ContractNo = updatedContractNo;
             existingContract.CmdId = contract.CmdId;
             existingContract.BaseId = contract.BaseId;
             existingContract.ClassId = contract.ClassId;
@@ -829,8 +896,13 @@ namespace A1.Api.Controllers
                 return NotFound("Contract not found.");
             }
 
-            // Soft delete - set IsDeleted = true
+            // Soft delete and release ContractNo so the same number can be recreated.
             contract.IsDeleted = true;
+            if (!string.IsNullOrWhiteSpace(contract.ContractNo)
+                && contract.ContractNo.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                contract.ContractNo = $"{contract.ContractNo.Trim()}#DEL#{contract.Id}";
+            }
             contract.Action = "DELETE";
             contract.ActionDate = DateTime.UtcNow;
             contract.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, request?.ActionBy);

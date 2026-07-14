@@ -1,3 +1,5 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using A1.Api.Models;
 using A1.Api.Repositories;
 using A1.Api.Utilities;
@@ -22,51 +24,22 @@ namespace A1.Api.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
+        public async Task<IActionResult> GetAll(
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 0,
+            CancellationToken cancellationToken = default)
         {
             pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
-            var baseQuery = _context.InterAccTransfers
-                .AsNoTracking()
-                .Where(x => x.IsDeleted == null || x.IsDeleted == false);
+            var (payload, totalCount) = await InterAccTransferGridQuery.QueryAsync(
+                _context,
+                pageNumber,
+                pageSize,
+                cancellationToken);
 
-            var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
             Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
-
-            var pageRowsQuery =
-                from row in baseQuery
-                join paidFrom in _context.CashAndBanks.Where(a => a.IsDeleted == null || a.IsDeleted == false)
-                    on row.PaidFromAccountId equals paidFrom.Id into paidFromGroup
-                from paidFrom in paidFromGroup.DefaultIfEmpty()
-                join receivedIn in _context.CashAndBanks.Where(a => a.IsDeleted == null || a.IsDeleted == false)
-                    on row.ReceivedInAccountId equals receivedIn.Id into receivedInGroup
-                from receivedIn in receivedInGroup.DefaultIfEmpty()
-                orderby row.TransferDate descending, row.Id descending
-                select new
-                {
-                    row,
-                    PaidFromAcctId = paidFrom != null ? paidFrom.AcctId : string.Empty,
-                    PaidFromName = paidFrom != null ? paidFrom.Name : string.Empty,
-                    PaidFromCurrency = paidFrom != null ? paidFrom.Currency : string.Empty,
-                    ReceivedInAcctId = receivedIn != null ? receivedIn.AcctId : string.Empty,
-                    ReceivedInName = receivedIn != null ? receivedIn.Name : string.Empty,
-                    ReceivedInCurrency = receivedIn != null ? receivedIn.Currency : string.Empty
-                };
-
-            var pageRows = await PaginationHelper.ApplyPaging(pageRowsQuery, pageNumber, pageSize)
-                .ToListAsync();
-
-            var payload = new List<InterAccTransfer>(pageRows.Count);
-            foreach (var item in pageRows)
-            {
-                item.row.PaidFromAccountDisplay = FormatAccountLabel(item.PaidFromAcctId, item.PaidFromName);
-                item.row.ReceivedInAccountDisplay = FormatAccountLabel(item.ReceivedInAcctId, item.ReceivedInName);
-                item.row.PaidFromCurrency = (item.PaidFromCurrency ?? string.Empty).Trim();
-                item.row.ReceivedInCurrency = (item.ReceivedInCurrency ?? string.Empty).Trim();
-                payload.Add(item.row);
-            }
 
             return Ok(payload);
         }
@@ -155,6 +128,11 @@ namespace A1.Api.Controllers
                 return BadRequest("Inter account transfer data is required.");
             }
 
+            if (!await CanManageInterAccTransferAsync())
+            {
+                return BadRequest("Only superuser or AHQ supervisor can edit inter account transfers.");
+            }
+
             if (item.Id == 0)
             {
                 item.Id = id;
@@ -218,6 +196,11 @@ namespace A1.Api.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
+            if (!await CanManageInterAccTransferAsync())
+            {
+                return BadRequest("Only superuser or AHQ supervisor can delete inter account transfers.");
+            }
+
             var existing = await _context.InterAccTransfers
                 .FirstOrDefaultAsync(x => x.Id == id && (x.IsDeleted == null || x.IsDeleted == false));
 
@@ -242,18 +225,6 @@ namespace A1.Api.Controllers
             return NoContent();
         }
 
-        private static string FormatAccountLabel(string? acctId, string? name)
-        {
-            var id = (acctId ?? string.Empty).Trim();
-            var acctName = (name ?? string.Empty).Trim();
-            if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(acctName))
-            {
-                return $"{id} | {acctName}";
-            }
-
-            return !string.IsNullOrEmpty(acctName) ? acctName : id;
-        }
-
         private static bool IsTrMode(string? mode)
         {
             return string.Equals(mode?.Trim(), "TR", StringComparison.OrdinalIgnoreCase);
@@ -264,9 +235,9 @@ namespace A1.Api.Controllers
             item.TransferDate = item.TransferDate.Date;
             item.VrNo = (item.VrNo ?? string.Empty).Trim();
             item.Description = string.IsNullOrWhiteSpace(item.Description) ? null : item.Description.Trim();
-            if (item.Description != null && item.Description.Length > 15)
+            if (item.Description != null && item.Description.Length > 35)
             {
-                item.Description = item.Description.Substring(0, 15);
+                item.Description = item.Description.Substring(0, 35);
             }
             item.Particulars = string.IsNullOrWhiteSpace(item.Particulars) ? null : item.Particulars.Trim();
             item.SettlementVrNo = string.IsNullOrWhiteSpace(item.SettlementVrNo) ? null : item.SettlementVrNo.Trim();
@@ -364,9 +335,9 @@ namespace A1.Api.Controllers
                 return "Particulars is required when a TR mode account is selected.";
             }
 
-            if (!string.IsNullOrWhiteSpace(item.Description) && item.Description.Trim().Length > 15)
+            if (!string.IsNullOrWhiteSpace(item.Description) && item.Description.Trim().Length > 35)
             {
-                return "Description cannot exceed 15 characters.";
+                return "Description cannot exceed 35 characters.";
             }
 
             var vrNo = item.VrNo.Trim();
@@ -396,6 +367,24 @@ namespace A1.Api.Controllers
                      a.Status == "" ||
                      a.Status == "Active" ||
                      a.Status.ToLower() != "inactive"));
+        }
+
+        private static bool IsLoginSuperuser(ClaimsPrincipal user)
+        {
+            var loginName = user.FindFirstValue(JwtRegisteredClaimNames.UniqueName)
+                ?? user.FindFirstValue(ClaimTypes.Name)
+                ?? user.Identity?.Name;
+            return string.Equals(loginName?.Trim(), "superuser", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task<bool> CanManageInterAccTransferAsync()
+        {
+            if (IsLoginSuperuser(User))
+            {
+                return true;
+            }
+
+            return await DataAccessScopeHelper.IsAhqSupervisorAsync(User, _context);
         }
     }
 }

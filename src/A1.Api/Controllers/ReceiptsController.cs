@@ -39,6 +39,7 @@ namespace A1.Api.Controllers
                 .OrderByDescending(x => x.Id)
                 .ToListAsync();
 
+            await ReceiptLineHelper.AttachLinesAsync(_context, rows);
             return Ok(rows);
         }
 
@@ -57,6 +58,7 @@ namespace A1.Api.Controllers
                 return NotFound();
             }
 
+            await ReceiptLineHelper.AttachLinesAsync(_context, new[] { row });
             return Ok(row);
         }
 
@@ -68,7 +70,8 @@ namespace A1.Api.Controllers
                 return BadRequest("Receipt is required.");
             }
 
-            var validation = ValidateReceipt(receipt);
+            var incomingLines = ReceiptLineHelper.ResolveIncomingLines(receipt);
+            var validation = ValidateReceipt(receipt, incomingLines);
             if (validation != null)
             {
                 return BadRequest(validation);
@@ -93,7 +96,18 @@ namespace A1.Api.Controllers
                 receipt.RecordType = "Receipt";
             }
 
+            receipt.LinesJson = null;
+
             await _repository.AddAsync(receipt);
+
+            await ReceiptLineHelper.ReplaceLinesAsync(
+                _context,
+                receipt,
+                incomingLines,
+                receipt.ActionBy);
+            await _context.SaveChangesAsync();
+
+            receipt.Lines = incomingLines;
             return CreatedAtAction(nameof(GetById), new { id = receipt.Id }, receipt);
         }
 
@@ -121,7 +135,8 @@ namespace A1.Api.Controllers
                 return NotFound("Receipt not found.");
             }
 
-            var validation = ValidateReceipt(receipt);
+            var incomingLines = ReceiptLineHelper.ResolveIncomingLines(receipt);
+            var validation = ValidateReceipt(receipt, incomingLines);
             if (validation != null)
             {
                 return BadRequest(validation);
@@ -143,7 +158,7 @@ namespace A1.Api.Controllers
             existing.PayeeName = receipt.PayeeName;
             existing.Description = receipt.Description;
             existing.GrandTotal = receipt.GrandTotal;
-            existing.LinesJson = receipt.LinesJson;
+            existing.LinesJson = null;
             if (await CanFinalizeReceiptByAhqAsync())
             {
                 existing.FinalizedByAhq = receipt.FinalizedByAhq == true;
@@ -152,7 +167,12 @@ namespace A1.Api.Controllers
             existing.Action = "UPDATE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, receipt.ActionBy);
 
-            await _repository.UpdateAsync(existing);
+            await ReceiptLineHelper.ReplaceLinesAsync(
+                _context,
+                existing,
+                incomingLines,
+                existing.ActionBy);
+            await _context.SaveChangesAsync();
             return NoContent();
         }
 
@@ -176,12 +196,13 @@ namespace A1.Api.Controllers
             existing.Action = "DELETE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
 
+            await ReceiptLineHelper.SoftDeleteLinesAsync(_context, id, existing.ActionBy);
             _context.Receipts.Update(existing);
             await _context.SaveChangesAsync();
             return NoContent();
         }
 
-        private static string? ValidateReceipt(Receipt receipt)
+        private static string? ValidateReceipt(Receipt receipt, IReadOnlyList<ReceiptLine> lines)
         {
             if (receipt.Date == null) return "Date is required.";
             if (string.IsNullOrWhiteSpace(receipt.Month) || !MonthYearPattern.IsMatch(receipt.Month.Trim()))
@@ -192,6 +213,12 @@ namespace A1.Api.Controllers
             if (string.IsNullOrWhiteSpace(receipt.PaidFrom)) return "Paid from is required.";
             if (string.IsNullOrWhiteSpace(receipt.PayeeName)) return "Payee is required.";
             if (receipt.GrandTotal == null || receipt.GrandTotal < 0) return "Grand total is required.";
+
+            if (lines == null || lines.Count == 0)
+            {
+                return "At least one line item is required.";
+            }
+
             return null;
         }
 

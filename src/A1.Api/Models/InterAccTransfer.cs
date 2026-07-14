@@ -12,7 +12,7 @@ namespace A1.Api.Models
         [MaxLength(50)]
         public string VrNo { get; set; } = string.Empty;
 
-        [MaxLength(15)]
+        [MaxLength(35)]
         public string? Description { get; set; }
 
         [MaxLength(500)]

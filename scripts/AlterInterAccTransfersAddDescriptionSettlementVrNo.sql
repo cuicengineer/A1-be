@@ -2,7 +2,7 @@
 IF COL_LENGTH('dbo.InterAccTransfers', 'Description') IS NULL
 BEGIN
     ALTER TABLE dbo.InterAccTransfers
-        ADD Description NVARCHAR(15) NULL;
+        ADD Description NVARCHAR(35) NULL;
 END
 GO
 

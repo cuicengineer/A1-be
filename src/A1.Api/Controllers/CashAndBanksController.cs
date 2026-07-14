@@ -24,84 +24,22 @@ namespace A1.Api.Controllers
             [FromQuery] int pageNumber = 1,
             [FromQuery] int pageSize = 0,
             [FromQuery] int? parentCashAndBankId = null,
-            [FromQuery] bool topLevelOnly = false)
+            [FromQuery] bool topLevelOnly = false,
+            CancellationToken cancellationToken = default)
         {
             pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
-            var baseQuery = _context.CashAndBanks
-                .AsNoTracking()
-                .Where(x => x.IsDeleted == null || x.IsDeleted == false);
+            var (payload, totalCount) = await CashAndBankGridQuery.QueryAsync(
+                _context,
+                pageNumber,
+                pageSize,
+                parentCashAndBankId,
+                topLevelOnly,
+                cancellationToken);
 
-            if (parentCashAndBankId.HasValue && parentCashAndBankId.Value > 0)
-            {
-                baseQuery = baseQuery.Where(x => x.ParentCashAndBankId == parentCashAndBankId.Value);
-            }
-            else if (topLevelOnly)
-            {
-                baseQuery = baseQuery.Where(x => x.ParentCashAndBankId == null);
-            }
-
-            var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
             Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
-
-            var childCountsByParentId = await _context.CashAndBanks
-                .AsNoTracking()
-                .Where(x =>
-                    (x.IsDeleted == null || x.IsDeleted == false) &&
-                    x.ParentCashAndBankId != null)
-                .GroupBy(x => x.ParentCashAndBankId)
-                .Select(g => new { ParentId = g.Key!.Value, Count = g.Count() })
-                .ToDictionaryAsync(x => x.ParentId, x => x.Count);
-
-            var pageRowsQuery =
-                from row in baseQuery
-                join coa in _context.ChartOfAccounts.Where(c => c.IsDeleted == null || c.IsDeleted == false)
-                    on row.CoaId equals coa.Id into coaGroup
-                from coa in coaGroup.DefaultIfEmpty()
-                join bank in _context.BankLists.Where(b => b.IsDeleted == null || b.IsDeleted == false)
-                    on row.BankListsId equals bank.Id into bankGroup
-                from bank in bankGroup.DefaultIfEmpty()
-                orderby row.Id descending
-                select new
-                {
-                    row,
-                    CoaAcctId = coa != null ? coa.AcctId : string.Empty,
-                    CoaAcctName = coa != null ? coa.AcctName : string.Empty,
-                    CoaControlAccount = coa != null ? coa.ControlAccount : string.Empty,
-                    BankName = bank != null ? bank.Name : string.Empty,
-                    BankCode = bank != null ? bank.Code : string.Empty
-                };
-
-            var pageRows = await PaginationHelper.ApplyPaging(pageRowsQuery, pageNumber, pageSize)
-                .ToListAsync();
-
-            var payload = new List<CashAndBank>(pageRows.Count);
-            foreach (var item in pageRows)
-            {
-                var acctId = (item.CoaAcctId ?? string.Empty).Trim();
-                var acctName = (item.CoaAcctName ?? string.Empty).Trim();
-                item.row.CoaDisplay = !string.IsNullOrEmpty(acctId) && !string.IsNullOrEmpty(acctName)
-                    ? $"{acctId} - {acctName}"
-                    : !string.IsNullOrEmpty(acctName)
-                        ? acctName
-                        : item.CoaControlAccount ?? string.Empty;
-
-                var bankName = (item.BankName ?? string.Empty).Trim();
-                var bankCode = (item.BankCode ?? string.Empty).Trim();
-                item.row.BankDisplay = !string.IsNullOrEmpty(bankCode)
-                    ? $"{bankName} ({bankCode})"
-                    : bankName;
-
-                if (item.row.ParentCashAndBankId == null &&
-                    childCountsByParentId.TryGetValue(item.row.Id, out var childCount))
-                {
-                    item.row.ChildCount = childCount;
-                }
-
-                payload.Add(item.row);
-            }
 
             return Ok(payload);
         }
@@ -210,6 +148,15 @@ namespace A1.Api.Controllers
                 return NotFound("Cash and bank record not found.");
             }
 
+            if (await IsAccountReferencedByInterAccTransferAsync(id))
+            {
+                var acctLabel = string.IsNullOrWhiteSpace(existing.AcctId)
+                    ? existing.Name
+                    : existing.AcctId.Trim();
+                return BadRequest(
+                    $"Cannot delete account \"{acctLabel}\" because it is used in one or more inter-account transfer records. Delete those transfer records first.");
+            }
+
             existing.IsDeleted = true;
             existing.Action = "DELETE";
             existing.ActionDate = DateTime.UtcNow;
@@ -250,6 +197,15 @@ namespace A1.Api.Controllers
             }
 
             return null;
+        }
+
+        private async Task<bool> IsAccountReferencedByInterAccTransferAsync(int accountId)
+        {
+            return await _context.InterAccTransfers
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    (x.IsDeleted == null || x.IsDeleted == false) &&
+                    (x.PaidFromAccountId == accountId || x.ReceivedInAccountId == accountId));
         }
     }
 }

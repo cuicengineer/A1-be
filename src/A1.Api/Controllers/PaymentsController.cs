@@ -31,6 +31,8 @@ namespace A1.Api.Controllers
                 .ThenByDescending(x => x.row.Id)
                 .ToListAsync();
 
+            var receipts = rows.Select(x => x.row).ToList();
+            await ReceiptLineHelper.AttachLinesAsync(_context, receipts);
             return Ok(rows.Select(MapPaymentRow).ToList());
         }
 
@@ -45,6 +47,7 @@ namespace A1.Api.Controllers
                 return NotFound();
             }
 
+            await ReceiptLineHelper.AttachLinesAsync(_context, new[] { item.row });
             return Ok(MapPaymentRow(item));
         }
 
@@ -56,7 +59,8 @@ namespace A1.Api.Controllers
                 return BadRequest("Payment is required.");
             }
 
-            var validation = ValidatePayment(payment);
+            var incomingLines = ReceiptLineHelper.ResolveIncomingLines(payment);
+            var validation = ValidatePayment(payment, incomingLines);
             if (validation != null)
             {
                 return BadRequest(validation);
@@ -67,8 +71,18 @@ namespace A1.Api.Controllers
             payment.ActionDate = DateTime.UtcNow;
             payment.Action = "CREATE";
             payment.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, payment.ActionBy);
+            payment.LinesJson = null;
 
             await _repository.AddAsync(payment);
+
+            await ReceiptLineHelper.ReplaceLinesAsync(
+                _context,
+                payment,
+                incomingLines,
+                payment.ActionBy);
+            await _context.SaveChangesAsync();
+
+            payment.Lines = incomingLines;
             return CreatedAtAction(nameof(GetById), new { id = payment.Id }, payment);
         }
 
@@ -99,7 +113,8 @@ namespace A1.Api.Controllers
                 return NotFound("Payment not found.");
             }
 
-            var validation = ValidatePayment(payment);
+            var incomingLines = ReceiptLineHelper.ResolveIncomingLines(payment);
+            var validation = ValidatePayment(payment, incomingLines);
             if (validation != null)
             {
                 return BadRequest(validation);
@@ -116,12 +131,17 @@ namespace A1.Api.Controllers
             existing.PayeeName = payment.PayeeName;
             existing.Description = payment.Description;
             existing.GrandTotal = payment.GrandTotal;
-            existing.LinesJson = payment.LinesJson;
+            existing.LinesJson = null;
             existing.ActionDate = DateTime.UtcNow;
             existing.Action = "UPDATE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, payment.ActionBy);
 
-            await _repository.UpdateAsync(existing);
+            await ReceiptLineHelper.ReplaceLinesAsync(
+                _context,
+                existing,
+                incomingLines,
+                existing.ActionBy);
+            await _context.SaveChangesAsync();
             return NoContent();
         }
 
@@ -143,6 +163,7 @@ namespace A1.Api.Controllers
             existing.Action = "DELETE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
 
+            await ReceiptLineHelper.SoftDeleteLinesAsync(_context, id, existing.ActionBy);
             _context.Receipts.Update(existing);
             await _context.SaveChangesAsync();
             return NoContent();
@@ -191,7 +212,7 @@ namespace A1.Api.Controllers
             payment.Reference = null;
         }
 
-        private static string? ValidatePayment(Receipt payment)
+        private static string? ValidatePayment(Receipt payment, IReadOnlyList<ReceiptLine> lines)
         {
             if (payment.Date == null)
             {
@@ -218,7 +239,7 @@ namespace A1.Api.Controllers
                 return "Grand total is required.";
             }
 
-            if (string.IsNullOrWhiteSpace(payment.LinesJson) || payment.LinesJson.Trim() == "[]")
+            if (lines == null || lines.Count == 0)
             {
                 return "At least one line item is required.";
             }

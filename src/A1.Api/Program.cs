@@ -146,6 +146,15 @@ app.MapPost("/api/{entityName}", async (string entityName, System.Text.Json.Json
     var pkPropPost = GetPrimaryKey(entityType);
     var idValPost = pkPropPost.GetValue(entityObj);
     var idIntPost = Convert.ToInt32(idValPost);
+
+    if (string.Equals(entityName, "User", StringComparison.OrdinalIgnoreCase))
+    {
+        var db = sp.GetRequiredService<ApplicationDbContext>();
+        var actionByProp = entityType.GetProperty("ActionBy");
+        var actionBy = actionByProp?.GetValue(entityObj) as string;
+        await UserDefaultPermissionsHelper.SeedDefaultViewPermissionsAsync(db, idIntPost, actionBy);
+    }
+
     return Results.Created($"/api/{entityName}/{idIntPost}", entityObj);
 }).RequireAuthorization().RequireCors("AllowFrontend");
 

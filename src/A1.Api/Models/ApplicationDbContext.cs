@@ -31,6 +31,10 @@ namespace A1.Api.Models
         public DbSet<Currency> Currencies { get; set; }
         public DbSet<ExchangeRate> ExchangeRates { get; set; }
         public DbSet<InterAccTransfer> InterAccTransfers { get; set; }
+        public DbSet<JournalEntry> JournalEntries { get; set; }
+        public DbSet<JournalEntryLine> JournalEntryLines { get; set; }
+        public DbSet<Guideline> Guidelines { get; set; }
+        public DbSet<Notice> Notices { get; set; }
         public DbSet<PropertyType> PropertyTypes { get; set; }
         public DbSet<AuditLog> AuditLogs { get; set; }
         public DbSet<UserPermission> UserPermissions { get; set; }
@@ -55,6 +59,7 @@ namespace A1.Api.Models
         public DbSet<CollectionEntry> CollectionEntries { get; set; }
         public DbSet<ShareDistributionWorkbookAssignment> ShareDistributionWorkbookAssignments { get; set; }
         public DbSet<Receipt> Receipts { get; set; }
+        public DbSet<ReceiptLine> ReceiptLines { get; set; }
         public DbSet<CashAndBank> CashAndBanks { get; set; }
         public DbSet<ProductService> ProductServices { get; set; }
         public DbSet<ProductGood> ProductGoods { get; set; }
@@ -277,7 +282,7 @@ namespace A1.Api.Models
 
             modelBuilder.Entity<Dealer>(e =>
             {
-                e.ToTable("Dealers", "dbo");
+                e.ToTable("Parties", "dbo");
                 e.Property(x => x.Code).HasMaxLength(30);
                 e.Property(x => x.Prefix).HasMaxLength(20);
                 e.Property(x => x.Rank).HasMaxLength(100);
@@ -342,6 +347,44 @@ namespace A1.Api.Models
                 e.Property(x => x.VrNo).HasMaxLength(50);
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<ReceiptLine>(e =>
+            {
+                e.ToTable("ReceiptLines", "dbo");
+                // LineNo is a SQL Server reserved keyword (LINENO).
+                e.Property(x => x.LineNo).HasColumnName("LineNo");
+                e.Property(x => x.RacId).HasMaxLength(50);
+                e.Property(x => x.BaseId).HasMaxLength(50);
+                e.Property(x => x.Item).HasMaxLength(300);
+                e.Property(x => x.Account).HasMaxLength(300);
+                e.Property(x => x.AccountCoaId).HasMaxLength(50);
+                e.Property(x => x.PartyKey).HasMaxLength(100);
+                e.Property(x => x.PartyType).HasMaxLength(50);
+                e.Property(x => x.PartyId).HasMaxLength(50);
+                e.Property(x => x.PartyCode).HasMaxLength(100);
+                e.Property(x => x.PartyName).HasMaxLength(300);
+                e.Property(x => x.PartyLabel).HasMaxLength(300);
+                e.Property(x => x.ContractId).HasMaxLength(50);
+                e.Property(x => x.InvoiceKey).HasMaxLength(100);
+                e.Property(x => x.ContractNo).HasMaxLength(100);
+                e.Property(x => x.InvoiceNo).HasMaxLength(100);
+                e.Property(x => x.CollectionEntryId).HasMaxLength(50);
+                e.Property(x => x.TinTrn).HasMaxLength(100);
+                e.Property(x => x.TinFtn).HasMaxLength(100);
+                e.Property(x => x.Amount).HasColumnType("decimal(18,2)");
+                e.Property(x => x.UnitPrice).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Quantity).HasColumnType("decimal(18,4)");
+                e.Property(x => x.ProductKey).HasMaxLength(100);
+                e.Property(x => x.ProductType).HasMaxLength(50);
+                e.Property(x => x.ProductId).HasMaxLength(50);
+                e.Property(x => x.Discount).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Tax).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Total).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+                e.HasIndex(x => x.ReceiptId);
+                e.HasIndex(x => new { x.ReceiptId, x.LineNo });
             });
 
             modelBuilder.Entity<Class>(e =>
@@ -409,13 +452,71 @@ namespace A1.Api.Models
                 e.ToTable("InterAccTransfers", "dbo");
                 e.Property(x => x.TransferDate).HasColumnType("date");
                 e.Property(x => x.VrNo).HasMaxLength(50).IsRequired();
-                e.Property(x => x.Description).HasMaxLength(15);
+                e.Property(x => x.Description).HasMaxLength(35);
                 e.Property(x => x.Particulars).HasMaxLength(500);
                 e.Property(x => x.SettlementVrNo).HasMaxLength(50);
                 e.Property(x => x.PaidFromAmount).HasColumnType("decimal(18,2)");
                 e.Property(x => x.ReceivedInAmount).HasColumnType("decimal(18,2)");
                 e.Property(x => x.TinFtn).HasMaxLength(50);
                 e.Property(x => x.Status).HasMaxLength(20);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<JournalEntry>(e =>
+            {
+                e.ToTable("JournalEntries", "dbo");
+                e.Property(x => x.EntryDate).HasColumnType("date");
+                e.Property(x => x.VrNo).HasMaxLength(50).IsRequired();
+                e.Property(x => x.Description).HasMaxLength(50);
+                e.Property(x => x.TotalDebit).HasColumnType("decimal(18,2)");
+                e.Property(x => x.TotalCredit).HasColumnType("decimal(18,2)");
+                e.Property(x => x.LinesJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.AttachmentsJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.IsLock).HasDefaultValue(false);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<JournalEntryLine>(e =>
+            {
+                e.ToTable("JournalEntriesLines", "dbo");
+                // LineNo is a SQL Server reserved keyword (LINENO); keep explicit column name.
+                e.Property(x => x.LineNo).HasColumnName("LineNo");
+                e.Property(x => x.AccountSource).HasMaxLength(20);
+                e.Property(x => x.AccountCoaId).HasMaxLength(50);
+                e.Property(x => x.AccountLabel).HasMaxLength(250);
+                e.Property(x => x.ContractId).HasMaxLength(50);
+                e.Property(x => x.ContractNo).HasMaxLength(100);
+                e.Property(x => x.InvoiceKey).HasMaxLength(100);
+                e.Property(x => x.InvoiceNo).HasMaxLength(100);
+                e.Property(x => x.InvoiceLabel).HasMaxLength(250);
+                e.Property(x => x.Quantity).HasColumnType("decimal(18,4)");
+                e.Property(x => x.UnitPrice).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Debit).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Credit).HasColumnType("decimal(18,2)");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+                e.HasIndex(x => x.JournalEntryId);
+                e.HasIndex(x => new { x.JournalEntryId, x.LineNo });
+            });
+
+            modelBuilder.Entity<Guideline>(e =>
+            {
+                e.ToTable("Guidelines", "dbo");
+                e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+                e.Property(x => x.Description).HasMaxLength(500);
+                e.Property(x => x.Status).HasDefaultValue(true);
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<Notice>(e =>
+            {
+                e.ToTable("Notices", "dbo");
+                e.Property(x => x.ContentHtml).HasColumnType("nvarchar(max)").IsRequired();
+                e.Property(x => x.Status).HasDefaultValue(true);
+                e.Property(x => x.ExcludedUserIdsJson).HasMaxLength(200);
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
             });

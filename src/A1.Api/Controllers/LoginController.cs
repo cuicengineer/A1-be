@@ -165,21 +165,94 @@ namespace A1.Api.Controllers
             return Ok(BuildRefreshResponse(user, newAccessToken, permissions));
         }
 
-        [HttpGet("me")]
-        [Authorize]
-        public async Task<IActionResult> Me()
+        public class ChangePasswordRequest
         {
-            var userIdClaim = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
-                ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (!int.TryParse(userIdClaim, out var userId))
+            public string CurrentPassword { get; set; } = string.Empty;
+            public string NewPassword { get; set; } = string.Empty;
+        }
+
+        public class VerifyPasswordRequest
+        {
+            public string CurrentPassword { get; set; } = string.Empty;
+        }
+
+        [HttpPost("verify-password")]
+        [Authorize]
+        public async Task<IActionResult> VerifyPassword([FromBody] VerifyPasswordRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request?.CurrentPassword))
+            {
+                return BadRequest("Current password is required.");
+            }
+
+            var user = await GetAuthenticatedUserAsync();
+            if (user == null)
             {
                 return Unauthorized();
             }
 
-            var user = await _context.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == userId);
+            if (!VerifyUserPassword(user, request.CurrentPassword))
+            {
+                return Unauthorized("Current password is incorrect.");
+            }
 
+            return Ok(new { verified = true });
+        }
+
+        [HttpPost("change-password")]
+        [Authorize]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request?.CurrentPassword))
+            {
+                return BadRequest("Current password is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(request?.NewPassword))
+            {
+                return BadRequest("New password is required.");
+            }
+
+            var policyError = ValidatePasswordPolicy(request.NewPassword);
+            if (policyError != null)
+            {
+                return BadRequest(policyError);
+            }
+
+            var user = await GetAuthenticatedUserAsync();
+            if (user == null)
+            {
+                return Unauthorized();
+            }
+
+            if (!VerifyUserPassword(user, request.CurrentPassword))
+            {
+                return Unauthorized("Current password is incorrect.");
+            }
+
+            if (string.Equals(request.CurrentPassword, request.NewPassword, StringComparison.Ordinal))
+            {
+                return BadRequest("New password must be different from the current password.");
+            }
+
+            PasswordHasher.Hash(request.NewPassword, out var hash, out var salt, out var iterations);
+            user.Password = hash;
+            user.PasswordSalt = salt;
+            user.PasswordIterations = iterations;
+            user.PasswordAttempts = 0;
+            user.Action = "UPDATE";
+            user.ActionDate = DateTime.UtcNow;
+            user.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, null);
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Password updated successfully." });
+        }
+
+        [HttpGet("me")]
+        [Authorize]
+        public async Task<IActionResult> Me()
+        {
+            var user = await GetAuthenticatedUserAsync(asNoTracking: true);
             if (user == null || user.Status != 1)
             {
                 return Unauthorized();
@@ -189,6 +262,62 @@ namespace A1.Api.Controllers
             var response = BuildLoginResponse(user, string.Empty, permissions);
             response.AccessToken = string.Empty;
             return Ok(response);
+        }
+
+        private async Task<User?> GetAuthenticatedUserAsync(bool asNoTracking = false)
+        {
+            var userIdClaim = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!int.TryParse(userIdClaim, out var userId))
+            {
+                return null;
+            }
+
+            var query = _context.Users.AsQueryable();
+            if (asNoTracking)
+            {
+                query = query.AsNoTracking();
+            }
+
+            return await query.FirstOrDefaultAsync(u => u.Id == userId);
+        }
+
+        private static bool VerifyUserPassword(User user, string password)
+        {
+            if (user.Password == null || user.PasswordSalt == null)
+            {
+                return false;
+            }
+
+            var iterations = user.PasswordIterations.GetValueOrDefault();
+            if (iterations <= 0) iterations = 150_000;
+
+            return PasswordHasher.Verify(password, user.Password, user.PasswordSalt, iterations);
+        }
+
+        private static string? ValidatePasswordPolicy(string password)
+        {
+            if (string.IsNullOrEmpty(password) || password.Length < 6 || password.Length > 12)
+            {
+                return "Password must be 6-12 characters long and contain at least 1 special character.";
+            }
+
+            var hasSpecial = false;
+            foreach (var ch in password)
+            {
+                if (!char.IsLetterOrDigit(ch))
+                {
+                    hasSpecial = true;
+                    break;
+                }
+            }
+
+            if (!hasSpecial)
+            {
+                return "Password must be 6-12 characters long and contain at least 1 special character.";
+            }
+
+            return null;
         }
 
         private LoginResponse BuildLoginResponse(User user, string accessToken, List<UserPermissionDto> permissions)

@@ -20,5 +20,8 @@ namespace A1.Api.Models
 
         [System.ComponentModel.DataAnnotations.Schema.NotMapped]
         public int ChildCount { get; set; }
+
+        [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+        public bool IsReferencedByInterAccTransfer { get; set; }
     }
 }

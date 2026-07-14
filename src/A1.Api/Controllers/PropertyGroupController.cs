@@ -474,6 +474,41 @@ namespace A1.Api.Controllers
                 return BadRequest("PropertyGroup data is required.");
             }
 
+            var gId = (request.GId ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(gId))
+            {
+                var duplicateExists = await _context.PropertyGroups
+                    .AsNoTracking()
+                    .AnyAsync(pg =>
+                        pg.GId == gId
+                        && pg.ClassId == request.ClassId
+                        && pg.BaseId == request.BaseId
+                        && (pg.IsDeleted == null || pg.IsDeleted == false));
+
+                if (duplicateExists)
+                {
+                    return Conflict(
+                        $"Group ID \"{gId}\" already exists for this class and base. Delete the existing group first to reuse this Group ID.");
+                }
+
+                // Soft-deleted rows may still hold the same GId under a unique index — free them so reuse works.
+                var softDeletedSameGId = await _context.PropertyGroups
+                    .Where(pg => pg.GId == gId && pg.IsDeleted == true)
+                    .ToListAsync();
+                if (softDeletedSameGId.Count > 0)
+                {
+                    foreach (var oldGroup in softDeletedSameGId)
+                    {
+                        if (oldGroup.GId != null
+                            && oldGroup.GId.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            oldGroup.GId = $"{oldGroup.GId.Trim()}#DEL#{oldGroup.Id}";
+                        }
+                    }
+                    await _context.SaveChangesAsync();
+                }
+            }
+
             // Use transaction for atomicity and memory efficiency
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
@@ -486,7 +521,7 @@ namespace A1.Api.Controllers
                     BaseId = request.BaseId,
                     ClassId = request.ClassId,
                     PropertyType = request.PropertyType,
-                    GId = request.GId,
+                    GId = gId,
                     UoM = request.UoM,
                     Area = request.Area,
                     Rate = request.Rate,
@@ -744,6 +779,25 @@ namespace A1.Api.Controllers
                 return Conflict("Cannot update this property group because it has a linked contract that is not deleted.");
             }
 
+            var updatedGId = (propertyGroup.GId ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(updatedGId))
+            {
+                var duplicateExists = await _context.PropertyGroups
+                    .AsNoTracking()
+                    .AnyAsync(pg =>
+                        pg.Id != id
+                        && pg.GId == updatedGId
+                        && pg.ClassId == propertyGroup.ClassId
+                        && pg.BaseId == propertyGroup.BaseId
+                        && (pg.IsDeleted == null || pg.IsDeleted == false));
+
+                if (duplicateExists)
+                {
+                    return Conflict(
+                        $"Group ID \"{updatedGId}\" already exists for this class and base. Delete the existing group first to reuse this Group ID.");
+                }
+            }
+
             var oldValuesJson = JsonSerializer.Serialize(new
             {
                 existingPropertyGroup.CmdId,
@@ -764,7 +818,7 @@ namespace A1.Api.Controllers
             existingPropertyGroup.BaseId = propertyGroup.BaseId;
             existingPropertyGroup.ClassId = propertyGroup.ClassId;
             existingPropertyGroup.PropertyType = propertyGroup.PropertyType;
-            existingPropertyGroup.GId = propertyGroup.GId;
+            existingPropertyGroup.GId = updatedGId;
             existingPropertyGroup.UoM = propertyGroup.UoM;
             existingPropertyGroup.Area = propertyGroup.Area;
             existingPropertyGroup.Rate = propertyGroup.Rate;
@@ -839,9 +893,15 @@ namespace A1.Api.Controllers
                 actionBy = existingActionBy;
             }
 
-            // Soft delete group - set Status = false and IsDeleted = true
+            // Soft delete group - set Status = false and IsDeleted = true.
+            // Release GId so the same Group ID can be recreated (DB unique indexes include soft-deleted rows).
             propertyGroup.Status = false;
             propertyGroup.IsDeleted = true;
+            if (!string.IsNullOrWhiteSpace(propertyGroup.GId)
+                && propertyGroup.GId.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                propertyGroup.GId = $"{propertyGroup.GId.Trim()}#DEL#{propertyGroup.Id}";
+            }
             propertyGroup.Action = "DELETE";
             propertyGroup.ActionDate = DateTime.UtcNow;
             propertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);

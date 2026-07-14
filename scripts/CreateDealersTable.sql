@@ -2,10 +2,10 @@ IF NOT EXISTS (
     SELECT 1
     FROM sys.tables t
     INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-    WHERE t.name = N'Dealers' AND s.name = N'dbo'
+    WHERE t.name = N'Parties' AND s.name = N'dbo'
 )
 BEGIN
-    CREATE TABLE dbo.Dealers
+    CREATE TABLE dbo.Parties
     (
         Id             INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
         Prefix         NVARCHAR(20)   NULL,
@@ -21,26 +21,26 @@ BEGIN
         Representative NVARCHAR(150)  NULL,
         BankListsId    INT            NULL,
         IBAN           NVARCHAR(34)   NULL,
-        Status         BIT            NOT NULL CONSTRAINT DF_Dealers_Status DEFAULT (1),
+        Status         BIT            NOT NULL CONSTRAINT DF_Parties_Status DEFAULT (1),
         ActionDate     DATETIME2(3)   NULL,
         ActionBy       NVARCHAR(150)  NULL,
         Action         NVARCHAR(50)   NULL,
         IsDeleted      BIT            NULL
     );
 
-    CREATE INDEX IX_Dealers_BankListsId ON dbo.Dealers (BankListsId);
-    CREATE INDEX IX_Dealers_IsDeleted ON dbo.Dealers (IsDeleted);
+    CREATE INDEX IX_Parties_BankListsId ON dbo.Parties (BankListsId);
+    CREATE INDEX IX_Parties_IsDeleted ON dbo.Parties (IsDeleted);
 END
 GO
 
 IF NOT EXISTS (
     SELECT 1
     FROM sys.indexes
-    WHERE name = N'UX_Dealers_Name_Active' AND object_id = OBJECT_ID(N'dbo.Dealers')
+    WHERE name = N'UX_Parties_Name_Active' AND object_id = OBJECT_ID(N'dbo.Parties')
 )
 BEGIN
-    CREATE UNIQUE INDEX UX_Dealers_Name_Active
-        ON dbo.Dealers (Name)
+    CREATE UNIQUE INDEX UX_Parties_Name_Active
+        ON dbo.Parties (Name)
         WHERE ISNULL(IsDeleted, 0) = 0 AND Status = 1;
 END
 GO
@@ -48,11 +48,11 @@ GO
 IF NOT EXISTS (
     SELECT 1
     FROM sys.indexes
-    WHERE name = N'UX_Dealers_NtnCnic_Active' AND object_id = OBJECT_ID(N'dbo.Dealers')
+    WHERE name = N'UX_Parties_NtnCnic_Active' AND object_id = OBJECT_ID(N'dbo.Parties')
 )
 BEGIN
-    CREATE UNIQUE INDEX UX_Dealers_NtnCnic_Active
-        ON dbo.Dealers (NtnCnic)
+    CREATE UNIQUE INDEX UX_Parties_NtnCnic_Active
+        ON dbo.Parties (NtnCnic)
         WHERE ISNULL(IsDeleted, 0) = 0 AND Status = 1 AND NtnCnic IS NOT NULL;
 END
 GO
@@ -60,11 +60,11 @@ GO
 IF NOT EXISTS (
     SELECT 1
     FROM sys.indexes
-    WHERE name = N'UX_Dealers_IBAN_Active' AND object_id = OBJECT_ID(N'dbo.Dealers')
+    WHERE name = N'UX_Parties_IBAN_Active' AND object_id = OBJECT_ID(N'dbo.Parties')
 )
 BEGIN
-    CREATE UNIQUE INDEX UX_Dealers_IBAN_Active
-        ON dbo.Dealers (IBAN)
+    CREATE UNIQUE INDEX UX_Parties_IBAN_Active
+        ON dbo.Parties (IBAN)
         WHERE ISNULL(IsDeleted, 0) = 0 AND Status = 1 AND IBAN IS NOT NULL;
 END
 GO

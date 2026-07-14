@@ -145,6 +145,40 @@ namespace A1.Api.Controllers
                 return BadRequest("Rental property data is required.");
             }
 
+            var pId = (rentalProperty.PId ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(pId))
+            {
+                var duplicateExists = await _context.RentalProperties
+                    .AsNoTracking()
+                    .AnyAsync(r =>
+                        r.PId == pId
+                        && (r.IsDeleted == null || r.IsDeleted == false));
+
+                if (duplicateExists)
+                {
+                    return Conflict(
+                        $"Property ID \"{pId}\" already exists. Delete the existing property first to reuse this Property No.");
+                }
+
+                // Soft-deleted rows may still hold the same PId under a unique index — free them so reuse works.
+                var softDeletedSamePId = await _context.RentalProperties
+                    .Where(r => r.PId == pId && r.IsDeleted == true)
+                    .ToListAsync();
+                if (softDeletedSamePId.Count > 0)
+                {
+                    foreach (var oldProperty in softDeletedSamePId)
+                    {
+                        if (oldProperty.PId != null
+                            && oldProperty.PId.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            oldProperty.PId = $"{oldProperty.PId.Trim()}#DEL#{oldProperty.Id}";
+                        }
+                    }
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            rentalProperty.PId = pId;
             rentalProperty.IsDeleted = false;
             rentalProperty.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, rentalProperty.ActionBy);
             await _repository.AddAsync(rentalProperty);
@@ -187,10 +221,43 @@ namespace A1.Api.Controllers
                 return Conflict("Cannot update this rental property because it is linked to a property group that is not deleted.");
             }
 
+            var updatedPId = (rentalProperty.PId ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(updatedPId))
+            {
+                var duplicateExists = await _context.RentalProperties
+                    .AsNoTracking()
+                    .AnyAsync(r =>
+                        r.Id != id
+                        && r.PId == updatedPId
+                        && (r.IsDeleted == null || r.IsDeleted == false));
+
+                if (duplicateExists)
+                {
+                    return Conflict(
+                        $"Property ID \"{updatedPId}\" already exists. Delete the existing property first to reuse this Property No.");
+                }
+
+                var softDeletedSamePId = await _context.RentalProperties
+                    .Where(r => r.Id != id && r.PId == updatedPId && r.IsDeleted == true)
+                    .ToListAsync();
+                if (softDeletedSamePId.Count > 0)
+                {
+                    foreach (var oldProperty in softDeletedSamePId)
+                    {
+                        if (oldProperty.PId != null
+                            && oldProperty.PId.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            oldProperty.PId = $"{oldProperty.PId.Trim()}#DEL#{oldProperty.Id}";
+                        }
+                    }
+                    await _context.SaveChangesAsync();
+                }
+            }
+
             existing.CmdId = rentalProperty.CmdId;
             existing.BaseId = rentalProperty.BaseId;
             existing.ClassId = rentalProperty.ClassId;
-            existing.PId = rentalProperty.PId;
+            existing.PId = updatedPId;
             existing.UoM = rentalProperty.UoM;
             existing.Area = rentalProperty.Area;
             existing.Location = rentalProperty.Location;
@@ -246,7 +313,13 @@ namespace A1.Api.Controllers
                 actionBy = existingActionBy;
             }
 
+            // Soft delete and release PId so the same Property No / Property ID can be recreated.
             rental.IsDeleted = true;
+            if (!string.IsNullOrWhiteSpace(rental.PId)
+                && rental.PId.IndexOf("#DEL#", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                rental.PId = $"{rental.PId.Trim()}#DEL#{rental.Id}";
+            }
             rental.Action = "DELETE";
             rental.ActionDate = DateTime.UtcNow;
             rental.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, actionBy);

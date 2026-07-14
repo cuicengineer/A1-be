@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace A1.Api.Models
@@ -15,7 +16,10 @@ namespace A1.Api.Models
         public string? PayeeName { get; set; }
         public string? Description { get; set; }
         public decimal? GrandTotal { get; set; }
+
+        /// <summary>Deprecated — line items are stored in ReceiptLines.</summary>
         public string? LinesJson { get; set; }
+
         public string? AttachmentsJson { get; set; }
         public bool? FinalizedByAhq { get; set; }
 
@@ -30,5 +34,8 @@ namespace A1.Api.Models
 
         [NotMapped]
         public string? ReceivedFromAccountDisplay { get; set; }
+
+        [NotMapped]
+        public List<ReceiptLine>? Lines { get; set; }
     }
 }

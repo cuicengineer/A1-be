@@ -210,7 +210,14 @@ namespace A1.Api.Models
                 e.Property(x => x.ItemwithCode).HasMaxLength(200);
                 e.Property(x => x.Description).HasMaxLength(500);
                 e.Property(x => x.AccHead).HasMaxLength(100);
-                e.HasIndex(x => new { x.ContractNo, x.InvoiceNo, x.SubInvoiceNo });
+                e.HasIndex(x => new { x.ContractNo, x.InvoiceNo, x.SubInvoiceNo })
+                    .IsUnique()
+                    .HasDatabaseName("UX_ContractInvoicesEdit_Contract_Invoice_Sub_Active")
+                    .HasFilter("[IsDeleted] = 0 AND [SubInvoiceNo] IS NOT NULL AND [SubInvoiceNo] <> ''");
+                e.HasIndex(x => new { x.ContractNo, x.InvoiceNo })
+                    .IsUnique()
+                    .HasDatabaseName("UX_ContractInvoicesEdit_Contract_Invoice_Header_Active")
+                    .HasFilter("[IsDeleted] = 0 AND [SubInvoiceNo] IS NULL");
             });
 
             modelBuilder.Entity<Supplier>(e =>
@@ -229,6 +236,7 @@ namespace A1.Api.Models
                 e.Property(x => x.TelNo).HasMaxLength(50);
                 e.Property(x => x.MobileNo).HasMaxLength(50);
                 e.Property(x => x.Representative).HasMaxLength(150);
+                e.Property(x => x.TitleAccount).HasMaxLength(100);
                 e.Property(x => x.IBAN).HasMaxLength(34);
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
@@ -267,6 +275,7 @@ namespace A1.Api.Models
                 e.Property(x => x.TelNo).HasMaxLength(50);
                 e.Property(x => x.MobileNo).HasMaxLength(50);
                 e.Property(x => x.Representative).HasMaxLength(150);
+                e.Property(x => x.TitleAccount).HasMaxLength(100);
                 e.Property(x => x.IBAN).HasMaxLength(34);
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
@@ -295,6 +304,7 @@ namespace A1.Api.Models
                 e.Property(x => x.TelNo).HasMaxLength(50);
                 e.Property(x => x.MobileNo).HasMaxLength(50);
                 e.Property(x => x.Representative).HasMaxLength(150);
+                e.Property(x => x.TitleAccount).HasMaxLength(100);
                 e.Property(x => x.IBAN).HasMaxLength(34);
                 e.Property(x => x.Action).HasMaxLength(50);
                 e.Property(x => x.ActionBy).HasMaxLength(150);
@@ -313,6 +323,7 @@ namespace A1.Api.Models
                 e.Property(x => x.CollectionDate).HasColumnType("date");
                 e.Property(x => x.Amount).HasColumnType("decimal(18,2)");
                 e.Property(x => x.TinTrn).HasMaxLength(100);
+                e.Property(x => x.Remarks).HasMaxLength(500);
                 e.Property(x => x.Status).HasMaxLength(20);
                 e.Property(x => x.VrNo).HasMaxLength(100);
                 e.Property(x => x.VrDate).HasColumnType("date");

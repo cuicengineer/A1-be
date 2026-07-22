@@ -20,47 +20,24 @@ namespace A1.Api.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 0)
+        public async Task<IActionResult> GetAll(
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 0,
+            CancellationToken cancellationToken = default)
         {
             pageNumber = PaginationHelper.NormalizePageNumber(pageNumber);
 
-            var baseQuery = _context.BankAccounts
-                .AsNoTracking()
-                .Where(a => a.IsDeleted == null || a.IsDeleted == false);
             var scope = await DataAccessScopeHelper.ResolveAsync(User, _context);
-            baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
+            var (payload, totalCount) = await BankAccountGridQuery.QueryAsync(
+                _context,
+                scope,
+                pageNumber,
+                pageSize,
+                cancellationToken);
 
-            var totalCount = await baseQuery.CountAsync();
             Response.Headers["X-Total-Count"] = totalCount.ToString();
             Response.Headers["X-Page-Number"] = pageNumber.ToString();
             Response.Headers["X-Page-Size"] = PaginationHelper.FormatPageSizeHeader(pageSize, totalCount);
-
-            var pageRowsQuery =
-                from acct in baseQuery
-                                  join cmd in _context.Commands.Where(c => c.IsDeleted == null || c.IsDeleted == false)
-                                      on acct.CmdId equals cmd.Id into cmdGroup
-                                  from cmd in cmdGroup.DefaultIfEmpty()
-                                  join b in _context.Bases.Where(x => x.IsDeleted == null || x.IsDeleted == false)
-                                      on acct.BaseId equals b.Id into baseGroup
-                                  from b in baseGroup.DefaultIfEmpty()
-                                  orderby acct.Id descending
-                                  select new
-                                  {
-                                      acct,
-                                      CmdName = cmd != null ? cmd.Name : string.Empty,
-                                      BaseName = b != null ? b.Name : string.Empty
-                                  };
-
-            var pageRows = await PaginationHelper.ApplyPaging(pageRowsQuery, pageNumber, pageSize)
-                .ToListAsync();
-
-            var payload = new List<BankAccount>(pageRows.Count);
-            foreach (var row in pageRows)
-            {
-                row.acct.CmdName = row.CmdName;
-                row.acct.BaseName = row.BaseName;
-                payload.Add(row.acct);
-            }
 
             var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
                 _context,
@@ -80,17 +57,17 @@ namespace A1.Api.Controllers
             baseQuery = DataAccessScopeHelper.ApplyScope(baseQuery, scope);
 
             var row = await (from acct in baseQuery
-                             join cmd in _context.Commands.Where(c => c.IsDeleted == null || c.IsDeleted == false)
-                                 on acct.CmdId equals cmd.Id into cmdGroup
-                             from cmd in cmdGroup.DefaultIfEmpty()
-                             join b in _context.Bases.Where(x => x.IsDeleted == null || x.IsDeleted == false)
-                                 on acct.BaseId equals b.Id into baseGroup
-                             from b in baseGroup.DefaultIfEmpty()
+                             join rac in _context.AccRacBases
+                                 on acct.CmdId equals rac.Id into racGroup
+                             from rac in racGroup.DefaultIfEmpty()
+                             join un in _context.AccRacBases
+                                 on acct.BaseId equals un.Id into unitGroup
+                             from un in unitGroup.DefaultIfEmpty()
                              select new
                              {
                                  acct,
-                                 CmdName = cmd != null ? cmd.Name : string.Empty,
-                                 BaseName = b != null ? b.Name : string.Empty
+                                 CmdName = rac != null ? rac.Name ?? string.Empty : string.Empty,
+                                 BaseName = un != null ? un.Name ?? string.Empty : string.Empty
                              })
                 .FirstOrDefaultAsync();
 

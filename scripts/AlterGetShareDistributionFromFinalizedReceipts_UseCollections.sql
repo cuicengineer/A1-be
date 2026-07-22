@@ -12,7 +12,8 @@ GO
 
     Included rows (CollectionEntries only — no ContractInvoicesEdit join):
       - CollectionEntries.Status = 'Received' (these are the valid collection/receipt lines)
-      - Amount > 0, ContractNo and InvoiceNo present
+      - Amount > 0, resolvable ContractId and InvoiceNo present
+      - One output row per ContractId (receipt amounts aggregated by contract)
       - @AsOfDate applies to fn_BasicContractInfo only (legacy receipt SP did not filter lines by date)
 */
 ALTER PROCEDURE [dbo].[sp_GetShareDistributionFromFinalizedReceipts]
@@ -31,10 +32,16 @@ BEGIN
     SELECT
         ce.Id AS CollectionEntryId,
         ce.ReceiptId,
+        ResolvedContractId = COALESCE(
+            NULLIF(ce.ContractId, 0),
+            cById.Id,
+            cByNo.Id
+        ),
         ResolvedContractNo =
             COALESCE(
                 NULLIF(LTRIM(RTRIM(ce.ContractNo)), ''''),
-                NULLIF(LTRIM(RTRIM(c.ContractNo)), '''')
+                NULLIF(LTRIM(RTRIM(cById.ContractNo)), ''''),
+                NULLIF(LTRIM(RTRIM(cByNo.ContractNo)), '''')
             ),
         ResolvedInvoiceNo =
             NULLIF(LTRIM(RTRIM(ce.InvoiceNo)), ''''),
@@ -42,26 +49,40 @@ BEGIN
             CAST(COALESCE(ce.VrDate, ce.CollectionDate) AS DATE),
         LineAmount = CAST(ISNULL(ce.Amount, 0) AS DECIMAL(18, 4))
     FROM dbo.CollectionEntries ce
-    LEFT JOIN dbo.Contracts c
-        ON c.Id = ce.ContractId
-       AND (c.IsDeleted = 0 OR c.IsDeleted IS NULL)
+    LEFT JOIN dbo.Contracts cById
+        ON cById.Id = ce.ContractId
+       AND (cById.IsDeleted = 0 OR cById.IsDeleted IS NULL)
+    OUTER APPLY
+    (
+        SELECT TOP (1)
+            c.Id,
+            c.ContractNo
+        FROM dbo.Contracts c
+        WHERE (NULLIF(ce.ContractId, 0) IS NULL OR cById.Id IS NULL)
+          AND NULLIF(LTRIM(RTRIM(ce.ContractNo)), '''') IS NOT NULL
+          AND c.ContractNo = LTRIM(RTRIM(ce.ContractNo))
+          AND (c.IsDeleted = 0 OR c.IsDeleted IS NULL)
+        ORDER BY c.Id DESC
+    ) cByNo
     WHERE (ce.IsDeleted = 0 OR ce.IsDeleted IS NULL)
       AND LTRIM(RTRIM(UPPER(ISNULL(ce.Status, '''')))) = ''RECEIVED''
       AND ISNULL(ce.Amount, 0) > 0
       AND COALESCE(
-            NULLIF(LTRIM(RTRIM(ce.ContractNo)), ''''),
-            NULLIF(LTRIM(RTRIM(c.ContractNo)), '''')
+            NULLIF(ce.ContractId, 0),
+            cById.Id,
+            cByNo.Id
           ) IS NOT NULL
       AND NULLIF(LTRIM(RTRIM(ce.InvoiceNo)), '''') IS NOT NULL
 ),
 ReceiptAgg AS
 (
     SELECT
-        ResolvedContractNo AS ContractNo,
+        ResolvedContractId AS ContractId,
+        MAX(ResolvedContractNo) AS ContractNo,
         ReceiptDate = MAX(CollectionDate),
         ReceiptAmount = CAST(ROUND(SUM(LineAmount), 2) AS DECIMAL(18, 2))
     FROM CollectionLines
-    GROUP BY ResolvedContractNo
+    GROUP BY ResolvedContractId
 ),
 ContractBase AS
 (
@@ -77,6 +98,8 @@ ContractBase AS
         c.VaArea,
         c.GroupArea,
         c.CmdId,
+        c.BaseId,
+        c.ClassId,
         RACName = COALESCE(NULLIF(rac.[Name], ''''), ''''),
         b.[Name] AS BaseName,
         b.FullName AS BaseFullName,
@@ -90,10 +113,12 @@ ContractBase AS
         bci.PAFShare AS PAFSharePA,
         cls.[Name] AS ClassName,
         cls.Code AS ClassCode,
-        WorkbookNo = ISNULL(wb.WorkbookNo, '''')
+        WorkbookNo = ISNULL(wb.WorkbookNo, ''''),
+        ra.ReceiptDate,
+        ra.ReceiptAmount
     FROM ReceiptAgg ra
     INNER JOIN dbo.Contracts c
-        ON c.ContractNo = ra.ContractNo
+        ON c.Id = ra.ContractId
        AND (c.IsDeleted = 0 OR c.IsDeleted IS NULL)
     LEFT JOIN dbo.Bases b
         ON b.Id = c.BaseId
@@ -116,52 +141,72 @@ ContractBase AS
 LatestSharingFormula AS
 (
     SELECT
-        c.ContractNo,
+        cb.Id AS ContractId,
         sf.AHQRate,
         sf.RACRate,
         sf.BaseRate
     FROM ContractBase cb
-    INNER JOIN dbo.Contracts c
-        ON c.Id = cb.Id
     OUTER APPLY
     (
         SELECT TOP (1)
-            sf.AHQRate,
-            sf.RACRate,
-            sf.BaseRate
-        FROM dbo.SharingFormulas sf
-        WHERE sf.CmdId = c.CmdId
-          AND sf.BaseId = c.BaseId
-          AND sf.ClassId = c.ClassId
-          AND (sf.IsDeleted = 0 OR sf.IsDeleted IS NULL)
-          AND (sf.Status = 1 OR sf.Status IS NULL)
-        ORDER BY sf.ApplicableDate DESC
+            sfInner.AHQRate,
+            sfInner.RACRate,
+            sfInner.BaseRate
+        FROM dbo.SharingFormulas sfInner
+        WHERE sfInner.CmdId = cb.CmdId
+          AND sfInner.BaseId = cb.BaseId
+          AND sfInner.ClassId = cb.ClassId
+          AND (sfInner.IsDeleted = 0 OR sfInner.IsDeleted IS NULL)
+          AND (sfInner.Status = 1 OR sfInner.Status IS NULL)
+        ORDER BY sfInner.ApplicableDate DESC
     ) sf
 ),
 Calculated AS
 (
     SELECT
-        cb.*,
-        ra.ReceiptDate,
-        ra.ReceiptAmount,
+        cb.Id,
+        cb.ContractNo,
+        cb.ContractStartDate,
+        cb.ContractEndDate,
+        cb.TenantNo,
+        cb.BusinessName,
+        cb.InitialRentPA,
+        cb.CurrentRentPA,
+        cb.VaArea,
+        cb.GroupArea,
+        cb.CmdId,
+        cb.RACName,
+        cb.BaseName,
+        cb.BaseFullName,
+        cb.TenantOwnerName,
+        cb.TenantBusinessName,
+        cb.RRFY,
+        cb.AreaBase,
+        cb.GroupRate,
+        cb.RentalValue,
+        cb.GovtSharePA,
+        cb.PAFSharePA,
+        cb.ClassName,
+        cb.ClassCode,
+        cb.WorkbookNo,
+        cb.ReceiptDate,
+        cb.ReceiptAmount,
         Ratio =
             CASE
                 WHEN cb.CurrentRentPA IS NULL THEN NULL
-                ELSE CAST(ROUND(ISNULL(cb.CurrentRentPA, 0) - ra.ReceiptAmount, 2) AS DECIMAL(18, 2))
+                ELSE CAST(ROUND(ISNULL(cb.CurrentRentPA, 0) - cb.ReceiptAmount, 2) AS DECIMAL(18, 2))
             END,
         Govt =
             CASE
                 WHEN NULLIF(cb.CurrentRentPA, 0) IS NULL THEN 0
-                ELSE CAST(ROUND(ISNULL(cb.GovtSharePA, 0) * (ra.ReceiptAmount / NULLIF(cb.CurrentRentPA, 0)), 2) AS DECIMAL(18, 2))
+                ELSE CAST(ROUND(ISNULL(cb.GovtSharePA, 0) * (cb.ReceiptAmount / NULLIF(cb.CurrentRentPA, 0)), 2) AS DECIMAL(18, 2))
             END,
         lsf.AHQRate,
         lsf.RACRate,
         lsf.BaseRate
-    FROM ReceiptAgg ra
-    INNER JOIN ContractBase cb
-        ON cb.ContractNo = ra.ContractNo
+    FROM ContractBase cb
     LEFT JOIN LatestSharingFormula lsf
-        ON lsf.ContractNo = cb.ContractNo
+        ON lsf.ContractId = cb.Id
 ),
 ShareCalc AS
 (

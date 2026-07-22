@@ -268,7 +268,106 @@ namespace A1.Api.Controllers
             existing.PropertyType = rentalProperty.PropertyType;
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, rentalProperty.ActionBy);
             await _repository.UpdateAsync(existing);
+
+            // Keep property-grouping snapshots in sync with live Area / UoM / Location.
+            await SyncPropertyGroupFieldsFromRentalPropertyAsync(existing);
+
             return NoContent();
+        }
+
+        /// <summary>
+        /// Updates PropertyGroupLinking.Area and recalculates each linked PropertyGroup's
+        /// Area, Location, and UoM from current rental-property values.
+        /// </summary>
+        private async Task SyncPropertyGroupFieldsFromRentalPropertyAsync(RentalProperty property)
+        {
+            var linkings = await _context.PropertyGroupLinkings
+                .Where(l => l.PropId == property.Id
+                    && (l.IsDeleted == null || l.IsDeleted == false))
+                .ToListAsync();
+
+            if (linkings.Count == 0)
+            {
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var actionBy = property.ActionBy;
+
+            foreach (var linking in linkings)
+            {
+                linking.Area = property.Area;
+                linking.ActionDate = now;
+                linking.Action = "UPDATE";
+                linking.ActionBy = actionBy;
+            }
+
+            var groupIds = linkings.Select(l => l.GrpId).Distinct().ToList();
+            var groups = await _context.PropertyGroups
+                .Where(g => groupIds.Contains(g.Id) && (g.IsDeleted == null || g.IsDeleted == false))
+                .ToListAsync();
+
+            if (groups.Count == 0)
+            {
+                await _context.SaveChangesAsync();
+                return;
+            }
+
+            var allLinkingsForGroups = await _context.PropertyGroupLinkings
+                .AsNoTracking()
+                .Where(l => groupIds.Contains(l.GrpId)
+                    && (l.IsDeleted == null || l.IsDeleted == false)
+                    && (l.Status == null || l.Status == true))
+                .Select(l => new { l.GrpId, l.PropId })
+                .ToListAsync();
+
+            var propIds = allLinkingsForGroups.Select(l => l.PropId).Distinct().ToList();
+            var propRows = await _context.RentalProperties
+                .AsNoTracking()
+                .Where(p => propIds.Contains(p.Id) && (p.IsDeleted == null || p.IsDeleted == false))
+                .Select(p => new { p.Id, p.Area, p.Location, p.UoM })
+                .ToListAsync();
+            var propsById = propRows.ToDictionary(
+                p => p.Id,
+                p => new PropSnapshot(p.Id, p.Area, p.Location, p.UoM));
+
+            // Prefer the just-updated in-memory values for this property.
+            propsById[property.Id] = new PropSnapshot(property.Id, property.Area, property.Location, property.UoM);
+
+            foreach (var group in groups)
+            {
+                var linkedPropIds = allLinkingsForGroups
+                    .Where(l => l.GrpId == group.Id)
+                    .Select(l => l.PropId)
+                    .Distinct()
+                    .ToList();
+
+                var linkedProps = linkedPropIds
+                    .Where(propsById.ContainsKey)
+                    .Select(pid => propsById[pid])
+                    .ToList();
+
+                group.Area = linkedProps.Sum(p => p.Area ?? 0m);
+                group.Location = string.Join(", ", linkedProps
+                    .Select(p => (p.Location ?? string.Empty).Trim())
+                    .Where(loc => loc.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
+                var uoms = linkedProps
+                    .Select(p => (p.UoM ?? string.Empty).Trim())
+                    .Where(u => u.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (uoms.Count > 0)
+                {
+                    group.UoM = string.Join(", ", uoms);
+                }
+
+                group.ActionDate = now;
+                group.Action = "UPDATE";
+                group.ActionBy = actionBy;
+            }
+
+            await _context.SaveChangesAsync();
         }
 
         private static bool IsLoginSuperuser(ClaimsPrincipal user)
@@ -335,5 +434,7 @@ namespace A1.Api.Controllers
     {
         public string? ActionBy { get; set; }
     }
+
+    file sealed record PropSnapshot(int Id, decimal? Area, string? Location, string? UoM);
 }
 

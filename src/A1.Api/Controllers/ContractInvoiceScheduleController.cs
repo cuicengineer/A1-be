@@ -213,7 +213,17 @@ namespace A1.Api.Controllers
                 existing.InvoiceNo = invoiceNo;
                 existing.SubInvoiceNo = subInvoiceNo;
                 ApplyInvoiceModel(existing, model, isCreate: true);
-                await EnsureSubInvoiceNoWhenFinalizedAsync(existing, model);
+                existing = await EnsureSubInvoiceNoWhenFinalizedAsync(existing, model);
+                var reviveConflict = await GetDuplicateSubInvoiceConflictAsync(
+                    contractNo,
+                    invoiceNo,
+                    existing.SubInvoiceNo,
+                    existing.Id);
+                if (reviveConflict != null)
+                {
+                    return Conflict(reviveConflict);
+                }
+
                 await _context.SaveChangesAsync();
                 return Ok(existing);
             }
@@ -226,7 +236,24 @@ namespace A1.Api.Controllers
                 CreatedAt = DateTime.UtcNow
             };
             ApplyInvoiceModel(created, model, isCreate: true);
-            await EnsureSubInvoiceNoWhenFinalizedAsync(created, model);
+            var ensuredCreate = await EnsureSubInvoiceNoWhenFinalizedAsync(created, model);
+            if (!ReferenceEquals(ensuredCreate, created))
+            {
+                // Finalized onto an existing SubInvoiceNo = "1" row instead of inserting a duplicate.
+                await _context.SaveChangesAsync();
+                return Ok(ensuredCreate);
+            }
+
+            var createConflict = await GetDuplicateSubInvoiceConflictAsync(
+                contractNo,
+                invoiceNo,
+                created.SubInvoiceNo,
+                excludeId: null);
+            if (createConflict != null)
+            {
+                return Conflict(createConflict);
+            }
+
             await _context.ContractInvoicesEdits.AddAsync(created);
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetByInvoiceNo), new { invoiceNo }, created);
@@ -289,9 +316,39 @@ namespace A1.Api.Controllers
             {
                 existing.ContractNo = contractNo;
                 existing.InvoiceNo = invoiceNo;
-                existing.SubInvoiceNo = subInvoiceNo;
+                // Header rows become SubInvoiceNo = "1" on finalize. Keep that key on undo/header
+                // updates so we do not create a second empty-sub row while "1" stays finalized.
+                if (!isHeaderRow)
+                {
+                    existing.SubInvoiceNo = subInvoiceNo;
+                }
+                else if (!string.IsNullOrWhiteSpace(subInvoiceNo))
+                {
+                    existing.SubInvoiceNo = subInvoiceNo;
+                }
+                else if (string.IsNullOrWhiteSpace(existing.SubInvoiceNo))
+                {
+                    existing.SubInvoiceNo = null;
+                }
+
                 ApplyInvoiceModel(existing, model, isCreate: false);
-                await EnsureSubInvoiceNoWhenFinalizedAsync(existing, model);
+                existing = await EnsureSubInvoiceNoWhenFinalizedAsync(existing, model);
+                if (isHeaderRow && model.IsFinalized == false)
+                {
+                    await ClearInvoiceFinalizedFlagsAsync(contractNo, invoiceNo);
+                    await SoftDeleteOrphanEmptyHeaderEditsAsync(contractNo, invoiceNo, existing.Id);
+                }
+
+                var updateConflict = await GetDuplicateSubInvoiceConflictAsync(
+                    contractNo,
+                    invoiceNo,
+                    existing.SubInvoiceNo,
+                    existing.Id);
+                if (updateConflict != null)
+                {
+                    return Conflict(updateConflict);
+                }
+
                 if (isHeaderRow && (model.IgnoreLockDate || IsInvoiceLockStateChanging(headerRow ?? existing, model)))
                 {
                     await SyncInvoiceLockStateAsync(contractNo, invoiceNo, model.IsLocked);
@@ -309,7 +366,28 @@ namespace A1.Api.Controllers
                 CreatedAt = DateTime.UtcNow
             };
             ApplyInvoiceModel(created, model, isCreate: true);
-            await EnsureSubInvoiceNoWhenFinalizedAsync(created, model);
+            var ensured = await EnsureSubInvoiceNoWhenFinalizedAsync(created, model);
+            if (!ReferenceEquals(ensured, created))
+            {
+                if (isHeaderRow && model.IsLocked.HasValue)
+                {
+                    await SyncInvoiceLockStateAsync(contractNo, invoiceNo, model.IsLocked);
+                }
+
+                await _context.SaveChangesAsync();
+                return Ok(ensured);
+            }
+
+            var insertConflict = await GetDuplicateSubInvoiceConflictAsync(
+                contractNo,
+                invoiceNo,
+                created.SubInvoiceNo,
+                excludeId: null);
+            if (insertConflict != null)
+            {
+                return Conflict(insertConflict);
+            }
+
             if (isHeaderRow && model.IsLocked.HasValue)
             {
                 await SyncInvoiceLockStateAsync(contractNo, invoiceNo, model.IsLocked);
@@ -417,17 +495,78 @@ namespace A1.Api.Controllers
             string? subInvoiceNo)
         {
             var isHeaderRow = string.IsNullOrWhiteSpace(subInvoiceNo);
-            return await _context.ContractInvoicesEdits
+            var query = _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && (x.IsDeleted == null || x.IsDeleted == false));
+
+            if (isHeaderRow)
+            {
+                // After finalize, EnsureSubInvoiceNoWhenFinalizedAsync sets SubInvoiceNo = "1".
+                // Undo/header PUT must find that row; matching only null/"" creates orphans.
+                return await query
+                    .Where(x =>
+                        x.SubInvoiceNo == null
+                        || x.SubInvoiceNo == ""
+                        || x.SubInvoiceNo == "1")
+                    .OrderByDescending(x => x.SubInvoiceNo == "1" ? 1 : 0)
+                    .ThenByDescending(x => x.Id)
+                    .FirstOrDefaultAsync();
+            }
+
+            return await query
+                .Where(x => (x.SubInvoiceNo ?? string.Empty) == subInvoiceNo)
+                .OrderByDescending(x => x.Id)
+                .FirstOrDefaultAsync();
+        }
+
+        /// <summary>
+        /// Clear IsFinalized on every active edit row for the invoice (header + item lines).
+        /// </summary>
+        private async Task ClearInvoiceFinalizedFlagsAsync(string contractNo, string invoiceNo)
+        {
+            var rows = await _context.ContractInvoicesEdits
                 .IgnoreQueryFilters()
                 .Where(x =>
                     x.ContractNo == contractNo
                     && x.InvoiceNo == invoiceNo
                     && (x.IsDeleted == null || x.IsDeleted == false)
-                    && (isHeaderRow
-                        ? x.SubInvoiceNo == null || x.SubInvoiceNo == ""
-                        : (x.SubInvoiceNo ?? string.Empty) == subInvoiceNo))
-                .OrderByDescending(x => x.Id)
-                .FirstOrDefaultAsync();
+                    && x.IsFinalized == true)
+                .ToListAsync();
+
+            foreach (var row in rows)
+            {
+                row.IsFinalized = false;
+            }
+        }
+
+        /// <summary>
+        /// Remove empty-sub header duplicates created by older undo PUTs that missed SubInvoiceNo = "1".
+        /// </summary>
+        private async Task SoftDeleteOrphanEmptyHeaderEditsAsync(
+            string contractNo,
+            string invoiceNo,
+            int keepEditId)
+        {
+            var orphans = await _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && x.Id != keepEditId
+                    && (x.IsDeleted == null || x.IsDeleted == false)
+                    && (x.SubInvoiceNo == null || x.SubInvoiceNo == ""))
+                .ToListAsync();
+
+            foreach (var orphan in orphans)
+            {
+                orphan.IsDeleted = true;
+                orphan.IsFinalized = false;
+                orphan.Action = "DELETE";
+                orphan.ActionDate = DateTime.UtcNow;
+            }
         }
 
         private static bool TryNormalizeKeys(
@@ -583,18 +722,111 @@ namespace A1.Api.Controllers
         /// <summary>
         /// When a header invoice row is finalized, ensure SubInvoiceNo is "1" so
         /// sp_GetContractInvoiceSchedule can join ContractInvoicesEdit (SubInvoiceNo = 1).
+        /// Never create a second active row with SubInvoiceNo = "1".
         /// </summary>
-        private static Task EnsureSubInvoiceNoWhenFinalizedAsync(
+        private async Task<ContractInvoicesEdit> EnsureSubInvoiceNoWhenFinalizedAsync(
             ContractInvoicesEdit target,
             ContractInvoicesEdit source)
         {
-            if (source.IsFinalized != true || !string.IsNullOrWhiteSpace(target.SubInvoiceNo))
+            if (source.IsFinalized != true)
             {
-                return Task.CompletedTask;
+                return target;
+            }
+
+            if (!string.IsNullOrWhiteSpace(target.SubInvoiceNo))
+            {
+                return target;
+            }
+
+            var existingOne = await FindExactActiveSubInvoiceAsync(
+                target.ContractNo ?? string.Empty,
+                target.InvoiceNo ?? string.Empty,
+                "1");
+
+            if (existingOne != null && existingOne.Id != target.Id)
+            {
+                // Another active "1" already exists — finalize that row; retire this empty header.
+                ApplyInvoiceModel(existingOne, source, isCreate: false);
+                existingOne.SubInvoiceNo = "1";
+                existingOne.IsFinalized = true;
+
+                if (target.Id > 0)
+                {
+                    target.IsDeleted = true;
+                    target.IsFinalized = false;
+                    target.Action = "DELETE";
+                    target.ActionDate = DateTime.UtcNow;
+                }
+
+                return existingOne;
             }
 
             target.SubInvoiceNo = "1";
-            return Task.CompletedTask;
+            return target;
+        }
+
+        private static string NormalizeSubInvoiceKey(string? subInvoiceNo)
+        {
+            var trimmed = (subInvoiceNo ?? string.Empty).Trim();
+            return string.IsNullOrEmpty(trimmed) ? "__HEADER__" : trimmed;
+        }
+
+        private async Task<ContractInvoicesEdit?> FindExactActiveSubInvoiceAsync(
+            string contractNo,
+            string invoiceNo,
+            string? subInvoiceNo)
+        {
+            var normalized = NormalizeSubInvoiceKey(subInvoiceNo);
+            var rows = await _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && (x.IsDeleted == null || x.IsDeleted == false))
+                .OrderByDescending(x => x.Id)
+                .ToListAsync();
+
+            return rows.FirstOrDefault(x =>
+                string.Equals(
+                    NormalizeSubInvoiceKey(x.SubInvoiceNo),
+                    normalized,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Reject saves that would leave two active rows with the same
+        /// ContractNo + InvoiceNo + SubInvoiceNo.
+        /// </summary>
+        private async Task<string?> GetDuplicateSubInvoiceConflictAsync(
+            string contractNo,
+            string invoiceNo,
+            string? subInvoiceNo,
+            int? excludeId)
+        {
+            var normalized = NormalizeSubInvoiceKey(subInvoiceNo);
+            var rows = await _context.ContractInvoicesEdits
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.ContractNo == contractNo
+                    && x.InvoiceNo == invoiceNo
+                    && (x.IsDeleted == null || x.IsDeleted == false)
+                    && (excludeId == null || x.Id != excludeId.Value))
+                .Select(x => new { x.Id, x.SubInvoiceNo })
+                .ToListAsync();
+
+            var hasClash = rows.Any(x =>
+                string.Equals(
+                    NormalizeSubInvoiceKey(x.SubInvoiceNo),
+                    normalized,
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (!hasClash)
+            {
+                return null;
+            }
+
+            var displaySub = normalized == "__HEADER__" ? "(header)" : normalized;
+            return $"Duplicate SubInvoiceNo is not allowed. An active edit already exists for ContractNo '{contractNo}', InvoiceNo '{invoiceNo}', SubInvoiceNo '{displaySub}'.";
         }
 
         private async Task<(IActionResult? Error, int? CmdId, int? BaseId)> ApplyScheduleScopeFiltersAsync(
@@ -716,7 +948,148 @@ namespace A1.Api.Controllers
             }
 
             await OverlayFinalizedFlagsFromHeaderEditsAsync(results, cancellationToken);
-            return results;
+            await OverlayReceivableFromInvoiceItemLinesAsync(results, cancellationToken);
+            return DeduplicateScheduleRowsByInvoice(results);
+        }
+
+        /// <summary>
+        /// Schedule JOIN can fan out when multiple ContractInvoicesEdit rows match the same
+        /// invoice (duplicate SubInvoiceNo). Keep one grid row per ContractNo + InvoiceNo.
+        /// </summary>
+        private static List<Dictionary<string, object?>> DeduplicateScheduleRowsByInvoice(
+            List<Dictionary<string, object?>> rows)
+        {
+            if (rows.Count <= 1)
+            {
+                return rows;
+            }
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var output = new List<Dictionary<string, object?>>(rows.Count);
+            foreach (var row in rows)
+            {
+                var contractNo = ReadRowString(row, "ContractNo");
+                var invoiceNo = ReadRowString(row, "InvoiceNo");
+                if (string.IsNullOrWhiteSpace(contractNo) || string.IsNullOrWhiteSpace(invoiceNo))
+                {
+                    output.Add(row);
+                    continue;
+                }
+
+                var key = $"{contractNo}|{invoiceNo}";
+                if (!seen.Add(key))
+                {
+                    continue;
+                }
+
+                output.Add(row);
+            }
+
+            return output;
+        }
+
+        /// <summary>
+        /// Grid Receivable must match Edit Agreement Invoice "Total Amount"
+        /// (sum of ContractInvoicesEdit item-line TotalRent for the invoice).
+        /// </summary>
+        private async Task OverlayReceivableFromInvoiceItemLinesAsync(
+            List<Dictionary<string, object?>> rows,
+            CancellationToken cancellationToken)
+        {
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            var keys = rows
+                .Select(row => new
+                {
+                    ContractNo = ReadRowString(row, "ContractNo"),
+                    InvoiceNo = ReadRowString(row, "InvoiceNo"),
+                })
+                .Where(key =>
+                    !string.IsNullOrWhiteSpace(key.ContractNo)
+                    && !string.IsNullOrWhiteSpace(key.InvoiceNo))
+                .Distinct()
+                .ToList();
+
+            if (keys.Count == 0)
+            {
+                return;
+            }
+
+            var contractNos = keys
+                .Select(key => key.ContractNo)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var invoiceNos = keys
+                .Select(key => key.InvoiceNo)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var itemLines = await _context.ContractInvoicesEdits
+                .AsNoTracking()
+                .Where(x =>
+                    contractNos.Contains(x.ContractNo!)
+                    && invoiceNos.Contains(x.InvoiceNo!)
+                    && (x.IsDeleted == null || x.IsDeleted == false)
+                    && (x.InvoiceStatus == null || x.InvoiceStatus != "Deleted")
+                    && x.SubInvoiceNo != null
+                    && x.SubInvoiceNo != ""
+                    && x.SubInvoiceNo != "0")
+                .Select(x => new
+                {
+                    ContractNo = x.ContractNo ?? string.Empty,
+                    InvoiceNo = x.InvoiceNo ?? string.Empty,
+                    TotalRent = x.TotalRent,
+                })
+                .ToListAsync(cancellationToken);
+
+            if (itemLines.Count == 0)
+            {
+                return;
+            }
+
+            var receivableByInvoice = itemLines
+                .GroupBy(
+                    x => $"{x.ContractNo}|{x.InvoiceNo}",
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Sum(x => x.TotalRent ?? 0m),
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var row in rows)
+            {
+                var key = $"{ReadRowString(row, "ContractNo")}|{ReadRowString(row, "InvoiceNo")}";
+                if (!receivableByInvoice.TryGetValue(key, out var receivable))
+                {
+                    continue;
+                }
+
+                row["TotalRent"] = receivable;
+                row["AmountReceivable"] = receivable;
+
+                var received = ReadRowDecimal(row, "AmountReceived") ?? 0m;
+                row["AmountPending"] = Math.Max(0m, receivable - received);
+            }
+        }
+
+        private static decimal? ReadRowDecimal(Dictionary<string, object?> row, string key)
+        {
+            if (!TryReadRowValue(row, key, out var value) || value == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return Convert.ToDecimal(value);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -940,9 +1313,12 @@ namespace A1.Api.Controllers
                 .Where(x =>
                     x.ContractNo == contractNo
                     && x.InvoiceNo == invoiceNo
-                    && (x.SubInvoiceNo == null || x.SubInvoiceNo == "")
+                    && (x.SubInvoiceNo == null
+                        || x.SubInvoiceNo == ""
+                        || x.SubInvoiceNo == "1")
                     && (x.IsDeleted == null || x.IsDeleted == false))
-                .OrderByDescending(x => x.Id)
+                .OrderByDescending(x => x.SubInvoiceNo == "1" ? 1 : 0)
+                .ThenByDescending(x => x.Id)
                 .FirstOrDefaultAsync();
         }
 

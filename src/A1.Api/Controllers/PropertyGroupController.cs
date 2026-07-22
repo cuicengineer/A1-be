@@ -1,12 +1,10 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
-using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Text.Json;
 
 namespace A1.Api.Controllers
 {
@@ -25,13 +23,11 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<PropertyGroup> _repository;
         private readonly ApplicationDbContext _context;
-        private readonly IAuditLogService _auditLogService;
 
-        public PropertyGroupController(IGenericRepository<PropertyGroup> repository, ApplicationDbContext context, IAuditLogService auditLogService)
+        public PropertyGroupController(IGenericRepository<PropertyGroup> repository, ApplicationDbContext context)
         {
             _repository = repository;
             _context = context;
-            _auditLogService = auditLogService;
         }
 
         /// <summary>
@@ -111,7 +107,14 @@ namespace A1.Api.Controllers
                                                   .AsNoTracking()
                                                   .Where(rp => rp.IsDeleted == null || rp.IsDeleted == false)
                                                   on l.PropId equals rp.Id
-                                              select new { l.GrpId, PropertyName = rp.PId })
+                                              select new
+                                              {
+                                                  l.GrpId,
+                                                  PropertyName = rp.PId,
+                                                  rp.Area,
+                                                  rp.Location,
+                                                  rp.UoM
+                                              })
                     .ToListAsync();
 
                 var attachedByGroup = linkedProperties
@@ -123,6 +126,23 @@ namespace A1.Api.Controllers
                             .Where(x => !string.IsNullOrWhiteSpace(x))
                             .Distinct()));
 
+                var liveMetricsByGroup = linkedProperties
+                    .GroupBy(x => x.GrpId)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => new
+                        {
+                            Area = g.Sum(x => x.Area ?? 0m),
+                            Location = string.Join(", ", g
+                                .Select(x => (x.Location ?? string.Empty).Trim())
+                                .Where(loc => loc.Length > 0)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)),
+                            UoM = string.Join(", ", g
+                                .Select(x => (x.UoM ?? string.Empty).Trim())
+                                .Where(u => u.Length > 0)
+                                .Distinct(StringComparer.OrdinalIgnoreCase))
+                        });
+
                 foreach (var row in response)
                 {
                     if (row.TryGetValue("Id", out var idObj) && idObj != null && int.TryParse(idObj.ToString(), out var grpId))
@@ -130,6 +150,16 @@ namespace A1.Api.Controllers
                         row["attachedproperties"] = attachedByGroup.TryGetValue(grpId, out var names)
                             ? names
                             : string.Empty;
+
+                        if (liveMetricsByGroup.TryGetValue(grpId, out var metrics))
+                        {
+                            row["Area"] = metrics.Area;
+                            row["Location"] = metrics.Location;
+                            if (!string.IsNullOrWhiteSpace(metrics.UoM))
+                            {
+                                row["UoM"] = metrics.UoM;
+                            }
+                        }
                     }
                     else
                     {
@@ -197,7 +227,39 @@ namespace A1.Api.Controllers
                 _context,
                 new[] { propertyGroup.Id },
                 "PropertyGroup", "PropertyGroups");
-            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(propertyGroup, attachedIds.Contains(propertyGroup.Id)));
+            var response = AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(
+                propertyGroup,
+                attachedIds.Contains(propertyGroup.Id));
+
+            var linkedProps = await (from l in _context.PropertyGroupLinkings.AsNoTracking()
+                                     where l.GrpId == id
+                                           && (l.IsDeleted == null || l.IsDeleted == false)
+                                           && (l.Status == null || l.Status == true)
+                                     join rp in _context.RentalProperties.AsNoTracking()
+                                         .Where(rp => rp.IsDeleted == null || rp.IsDeleted == false)
+                                         on l.PropId equals rp.Id
+                                     select new { rp.Area, rp.Location, rp.UoM })
+                .ToListAsync();
+
+            if (linkedProps.Count > 0)
+            {
+                response["Area"] = linkedProps.Sum(p => p.Area ?? 0m);
+                response["Location"] = string.Join(", ", linkedProps
+                    .Select(p => (p.Location ?? string.Empty).Trim())
+                    .Where(loc => loc.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
+                var uoms = linkedProps
+                    .Select(p => (p.UoM ?? string.Empty).Trim())
+                    .Where(u => u.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (uoms.Count > 0)
+                {
+                    response["UoM"] = string.Join(", ", uoms);
+                }
+            }
+
+            return Ok(response);
         }
 
         /// <summary>
@@ -259,7 +321,9 @@ namespace A1.Api.Controllers
                                 .ThenByDescending(rr => rr.Id)
                                 .Select(rr => rr.Rate)
                                 .FirstOrDefault(),
-                            Area = x.linking.Area ?? (prop != null ? prop.Area : null)
+                            Area = prop != null ? (prop.Area ?? x.linking.Area) : x.linking.Area,
+                            Location = prop != null ? prop.Location : null,
+                            UoM = prop != null ? prop.UoM : null
                         }
                     );
 
@@ -483,12 +547,36 @@ namespace A1.Api.Controllers
                         pg.GId == gId
                         && pg.ClassId == request.ClassId
                         && pg.BaseId == request.BaseId
+                        && pg.Status == true
                         && (pg.IsDeleted == null || pg.IsDeleted == false));
 
                 if (duplicateExists)
                 {
                     return Conflict(
-                        $"Group ID \"{gId}\" already exists for this class and base. Delete the existing group first to reuse this Group ID.");
+                        $"An active Group ID \"{gId}\" already exists for this class and base.");
+                }
+
+                // Inactive groups may reuse their displayed Group ID. Release the stored value
+                // before insert because the production database has a unique GId index.
+                var inactiveSameGId = await _context.PropertyGroups
+                    .Where(pg =>
+                        pg.GId == gId
+                        && pg.Status != true
+                        && (pg.IsDeleted == null || pg.IsDeleted == false))
+                    .ToListAsync();
+                foreach (var oldGroup in inactiveSameGId)
+                {
+                    oldGroup.GId = $"{gId}#INACTIVE#{oldGroup.Id}";
+                    oldGroup.ActionDate = DateTime.UtcNow;
+                    oldGroup.Action = "UPDATE";
+                    oldGroup.ActionBy = ActionByHelper.GetActionByWithIp(
+                        User,
+                        HttpContext,
+                        request.ActionBy);
+                }
+                if (inactiveSameGId.Count > 0)
+                {
+                    await _context.SaveChangesAsync();
                 }
 
                 // Soft-deleted rows may still hold the same GId under a unique index — free them so reuse works.
@@ -710,6 +798,100 @@ namespace A1.Api.Controllers
         }
 
         /// <summary>
+        /// Marks a property group, its active links, and all linked active contracts inactive.
+        /// This releases the properties and Group ID for a replacement active group.
+        /// </summary>
+        [HttpPost("{id}/deactivate")]
+        public async Task<IActionResult> Deactivate(
+            int id,
+            [FromBody] PropertyGroupDeactivateRequest? request = null)
+        {
+            var propertyGroup = await _context.PropertyGroups
+                .FirstOrDefaultAsync(pg =>
+                    pg.Id == id
+                    && (pg.IsDeleted == null || pg.IsDeleted == false));
+
+            if (propertyGroup == null)
+            {
+                return NotFound("PropertyGroup not found.");
+            }
+
+            var result = await DeactivateGroupInternalAsync(propertyGroup, request?.ActionBy);
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Shared deactivation: group Status=false, release GId, deactivate links + active contracts.
+        /// </summary>
+        private async Task<object> DeactivateGroupInternalAsync(PropertyGroup propertyGroup, string? actionByRaw)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                var now = DateTime.UtcNow;
+                var actionBy = ActionByHelper.GetActionByWithIp(
+                    User,
+                    HttpContext,
+                    actionByRaw);
+                var originalGId = propertyGroup.GId?.Trim() ?? string.Empty;
+
+                propertyGroup.Status = false;
+                propertyGroup.ActionDate = now;
+                propertyGroup.Action = "UPDATE";
+                propertyGroup.ActionBy = actionBy;
+                if (!string.IsNullOrWhiteSpace(originalGId)
+                    && originalGId.IndexOf("#INACTIVE#", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    propertyGroup.GId = $"{originalGId}#INACTIVE#{propertyGroup.Id}";
+                }
+
+                var linkings = await _context.PropertyGroupLinkings
+                    .Where(l =>
+                        l.GrpId == propertyGroup.Id
+                        && (l.IsDeleted == null || l.IsDeleted == false)
+                        && (l.Status == null || l.Status == true))
+                    .ToListAsync();
+                foreach (var linking in linkings)
+                {
+                    linking.Status = false;
+                    linking.ActionDate = now;
+                    linking.Action = "UPDATE";
+                    linking.ActionBy = actionBy;
+                }
+
+                var contracts = await _context.Contracts
+                    .Where(c =>
+                        c.GrpId == propertyGroup.Id
+                        && (c.IsDeleted == null || c.IsDeleted == false)
+                        && c.Status)
+                    .ToListAsync();
+                foreach (var contract in contracts)
+                {
+                    contract.Status = false;
+                    contract.ActionDate = now;
+                    contract.Action = "UPDATE";
+                    contract.ActionBy = actionBy;
+                }
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return new
+                {
+                    propertyGroup.Id,
+                    GId = originalGId,
+                    DeactivatedContracts = contracts.Count,
+                    ReleasedProperties = linkings.Count
+                };
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+
+        /// <summary>
         /// PUT: Update an existing property group
         /// </summary>
         [HttpPut("{id}")]
@@ -739,17 +921,28 @@ namespace A1.Api.Controllers
                 return NotFound("PropertyGroup not found.");
             }
 
-            var hasNonDeletedContract = await _context.Contracts
-                .AsNoTracking()
-                .AnyAsync(c => c.GrpId == id && (c.IsDeleted == null || c.IsDeleted == false));
-
-            if (hasNonDeletedContract && IsLoginSuperuser(User))
+            // Active → Inactive: persist status via the same deactivation path used by POST deactivate
+            // so AHQ supervisors (and other editors) can save status even when contracts are linked.
+            // Treat null Status as active (same convention as list/grid displays).
+            var currentlyActive = existingPropertyGroup.Status != false;
+            var requestingInactive = propertyGroup.Status == false;
+            if (currentlyActive && requestingInactive)
             {
-                var rateOnlyOldValuesJson = JsonSerializer.Serialize(new
-                {
-                    existingPropertyGroup.Rate
-                });
+                await DeactivateGroupInternalAsync(existingPropertyGroup, propertyGroup.ActionBy);
+                return NoContent();
+            }
 
+            // Only active contracts lock general edits. Inactive (non-deleted) contracts must not
+            // block status reactivation or other field updates for AHQ supervisors.
+            var hasActiveContract = await _context.Contracts
+                .AsNoTracking()
+                .AnyAsync(c =>
+                    c.GrpId == id
+                    && (c.IsDeleted == null || c.IsDeleted == false)
+                    && c.Status);
+
+            if (hasActiveContract && IsLoginSuperuser(User))
+            {
                 existingPropertyGroup.Rate = propertyGroup.Rate;
                 existingPropertyGroup.ActionDate = DateTime.UtcNow;
                 existingPropertyGroup.Action = "UPDATE";
@@ -757,26 +950,12 @@ namespace A1.Api.Controllers
 
                 await _repository.UpdateAsync(existingPropertyGroup);
 
-                var rateOnlyNewValuesJson = JsonSerializer.Serialize(new
-                {
-                    existingPropertyGroup.Rate
-                });
-                await _auditLogService.LogAsync(new AuditLog
-                {
-                    EntityName = "PropertyGroup",
-                    EntityId = id,
-                    OldValuesJson = rateOnlyOldValuesJson,
-                    NewValuesJson = rateOnlyNewValuesJson,
-                    ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
-                    Action = "API"
-                });
-
                 return NoContent();
             }
 
-            if (hasNonDeletedContract && !IsLoginSuperuser(User))
+            if (hasActiveContract && !IsLoginSuperuser(User))
             {
-                return Conflict("Cannot update this property group because it has a linked contract that is not deleted.");
+                return Conflict("Cannot update this property group because it has a linked active contract.");
             }
 
             var updatedGId = (propertyGroup.GId ?? string.Empty).Trim();
@@ -789,29 +968,15 @@ namespace A1.Api.Controllers
                         && pg.GId == updatedGId
                         && pg.ClassId == propertyGroup.ClassId
                         && pg.BaseId == propertyGroup.BaseId
+                        && pg.Status == true
                         && (pg.IsDeleted == null || pg.IsDeleted == false));
 
                 if (duplicateExists)
                 {
                     return Conflict(
-                        $"Group ID \"{updatedGId}\" already exists for this class and base. Delete the existing group first to reuse this Group ID.");
+                        $"An active Group ID \"{updatedGId}\" already exists for this class and base.");
                 }
             }
-
-            var oldValuesJson = JsonSerializer.Serialize(new
-            {
-                existingPropertyGroup.CmdId,
-                existingPropertyGroup.BaseId,
-                existingPropertyGroup.ClassId,
-                existingPropertyGroup.PropertyType,
-                existingPropertyGroup.GId,
-                existingPropertyGroup.UoM,
-                existingPropertyGroup.Area,
-                existingPropertyGroup.Rate,
-                existingPropertyGroup.Location,
-                existingPropertyGroup.Remarks,
-                existingPropertyGroup.Status
-            });
 
             // Update properties efficiently
             existingPropertyGroup.CmdId = propertyGroup.CmdId;
@@ -830,30 +995,6 @@ namespace A1.Api.Controllers
             existingPropertyGroup.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, propertyGroup.ActionBy);
 
             await _repository.UpdateAsync(existingPropertyGroup);
-
-            var newValuesJson = JsonSerializer.Serialize(new
-            {
-                existingPropertyGroup.CmdId,
-                existingPropertyGroup.BaseId,
-                existingPropertyGroup.ClassId,
-                existingPropertyGroup.PropertyType,
-                existingPropertyGroup.GId,
-                existingPropertyGroup.UoM,
-                existingPropertyGroup.Area,
-                existingPropertyGroup.Rate,
-                existingPropertyGroup.Location,
-                existingPropertyGroup.Remarks,
-                existingPropertyGroup.Status
-            });
-            await _auditLogService.LogAsync(new AuditLog
-            {
-                EntityName = "PropertyGroup",
-                EntityId = id,
-                OldValuesJson = oldValuesJson,
-                NewValuesJson = newValuesJson,
-                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
-                Action = "API"
-            });
 
             return NoContent();
         }
@@ -1042,6 +1183,11 @@ namespace A1.Api.Controllers
     /// Request DTO for deleting PropertyGroup
     /// </summary>
     public class PropertyGroupDeleteRequest
+    {
+        public string? ActionBy { get; set; }
+    }
+
+    public class PropertyGroupDeactivateRequest
     {
         public string? ActionBy { get; set; }
     }

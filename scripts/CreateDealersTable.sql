@@ -48,10 +48,16 @@ GO
 IF NOT EXISTS (
     SELECT 1
     FROM sys.indexes
+    WHERE name = N'IX_Parties_NtnCnic_Active' AND object_id = OBJECT_ID(N'dbo.Parties')
+)
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
     WHERE name = N'UX_Parties_NtnCnic_Active' AND object_id = OBJECT_ID(N'dbo.Parties')
 )
 BEGIN
-    CREATE UNIQUE INDEX UX_Parties_NtnCnic_Active
+    -- Non-unique: duplicate NTN / CNIC is allowed on active parties
+    CREATE NONCLUSTERED INDEX IX_Parties_NtnCnic_Active
         ON dbo.Parties (NtnCnic)
         WHERE ISNULL(IsDeleted, 0) = 0 AND Status = 1 AND NtnCnic IS NOT NULL;
 END

@@ -1,12 +1,10 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
-using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Security.Claims;
-using System.Text.Json;
 
 namespace A1.Api.Controllers
 {
@@ -16,13 +14,11 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<RevenueRate> _repository;
         private readonly ApplicationDbContext _context;
-        private readonly IAuditLogService _auditLogService;
 
-        public RevenueRatesController(IGenericRepository<RevenueRate> repository, ApplicationDbContext context, IAuditLogService auditLogService)
+        public RevenueRatesController(IGenericRepository<RevenueRate> repository, ApplicationDbContext context)
         {
             _repository = repository;
             _context = context;
-            _auditLogService = auditLogService;
         }
 
         /// <summary>
@@ -200,6 +196,20 @@ namespace A1.Api.Controllers
                 return BadRequest("Revenue rate data is required.");
             }
 
+            var fiscal = GetFiscalFromApplicableDate(revenueRate.ApplicableDate);
+            var hasActiveRateForFiscal = await _context.RevenueRates
+                .AsNoTracking()
+                .AnyAsync(r =>
+                    (r.IsDeleted == null || r.IsDeleted == false) &&
+                    (r.Status == null || r.Status == true) &&
+                    r.PropertyId == revenueRate.PropertyId &&
+                    r.Fiscal == fiscal);
+            if (hasActiveRateForFiscal)
+            {
+                return BadRequest(
+                    $"An active revenue rate already exists for this property for RRFY {fiscal}. A property can have only one active record per fiscal year.");
+            }
+
             var hasActiveRate = await _context.RevenueRates
                 .AsNoTracking()
                 .AnyAsync(r =>
@@ -214,7 +224,7 @@ namespace A1.Api.Controllers
             }
 
             revenueRate.IsDeleted = false;
-            revenueRate.Fiscal = GetFiscalFromApplicableDate(revenueRate.ApplicableDate);
+            revenueRate.Fiscal = fiscal;
             revenueRate.RateScope = GetRateScope(revenueRate.CmdId, revenueRate.BaseId);
             revenueRate.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, revenueRate.ActionBy);
             await _repository.AddAsync(revenueRate);
@@ -246,18 +256,6 @@ namespace A1.Api.Controllers
                 return NotFound("Revenue rate not found.");
             }
 
-            var oldValuesJson = JsonSerializer.Serialize(new
-            {
-                existing.PropertyId,
-                existing.CmdId,
-                existing.BaseId,
-                existing.ApplicableDate,
-                existing.DeactiveDate,
-                existing.Rate,
-                existing.Attachments,
-                existing.Status
-            });
-
             existing.PropertyId = revenueRate.PropertyId;
             existing.CmdId = revenueRate.CmdId;
             existing.BaseId = revenueRate.BaseId;
@@ -274,27 +272,6 @@ namespace A1.Api.Controllers
 
             await _repository.UpdateAsync(existing);
 
-            var newValuesJson = JsonSerializer.Serialize(new
-            {
-                existing.PropertyId,
-                existing.CmdId,
-                existing.BaseId,
-                existing.ApplicableDate,
-                existing.DeactiveDate,
-                existing.Rate,
-                existing.Attachments,
-                existing.Status
-            });
-            await _auditLogService.LogAsync(new AuditLog
-            {
-                EntityName = "RevenueRate",
-                EntityId = id,
-                OldValuesJson = oldValuesJson,
-                NewValuesJson = newValuesJson,
-                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
-                Action = "API"
-            });
-
             return NoContent();
         }
 
@@ -308,19 +285,6 @@ namespace A1.Api.Controllers
             {
                 return NotFound("Revenue rate not found.");
             }
-
-            var oldValuesJson = JsonSerializer.Serialize(new
-            {
-                revenueRate.PropertyId,
-                revenueRate.CmdId,
-                revenueRate.BaseId,
-                revenueRate.ApplicableDate,
-                revenueRate.DeactiveDate,
-                revenueRate.Rate,
-                revenueRate.Attachments,
-                revenueRate.Status,
-                revenueRate.IsDeleted
-            });
 
             var actionBy = request?.ActionBy;
             if (string.IsNullOrWhiteSpace(actionBy))
@@ -341,16 +305,6 @@ namespace A1.Api.Controllers
 
             _context.RevenueRates.Update(revenueRate);
             await _context.SaveChangesAsync();
-
-            await _auditLogService.LogAsync(new AuditLog
-            {
-                EntityName = "RevenueRate",
-                EntityId = id,
-                OldValuesJson = oldValuesJson,
-                NewValuesJson = JsonSerializer.Serialize(new { IsDeleted = true, Action = "DELETE" }),
-                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
-                Action = "API"
-            });
 
             return NoContent();
         }

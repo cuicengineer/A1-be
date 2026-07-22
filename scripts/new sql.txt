@@ -1,8 +1,0 @@
-add a space in contract no in sharedistributionform finalized SP
-
-adde racname in this sp
-
-
--- a1_api/scripts/AlterInterAccTransfersDescriptionLength35.sql
-ALTER TABLE dbo.InterAccTransfers
-    ALTER COLUMN Description NVARCHAR(35) NULL;

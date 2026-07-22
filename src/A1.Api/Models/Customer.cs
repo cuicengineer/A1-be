@@ -19,6 +19,7 @@ namespace A1.Api.Models
         public int? CoaId { get; set; }
         public int? CoaId2 { get; set; }
         public string? Representative { get; set; }
+        public string? TitleAccount { get; set; }
         public int? BankListsId { get; set; }
         public string? IBAN { get; set; }
         public bool Status { get; set; } = true;

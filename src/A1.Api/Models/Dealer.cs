@@ -16,6 +16,7 @@ namespace A1.Api.Models
         public string? TelNo { get; set; }
         public string? MobileNo { get; set; }
         public string? Representative { get; set; }
+        public string? TitleAccount { get; set; }
         public int? BankListsId { get; set; }
         public string? IBAN { get; set; }
         public bool Status { get; set; } = true;

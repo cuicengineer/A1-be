@@ -134,6 +134,7 @@ namespace A1.Api.Controllers
             existing.TelNo = dealer.TelNo;
             existing.MobileNo = dealer.MobileNo;
             existing.Representative = dealer.Representative;
+            existing.TitleAccount = dealer.TitleAccount;
             existing.BankListsId = dealer.BankListsId;
             existing.IBAN = dealer.IBAN;
             existing.Status = dealer.Status;
@@ -221,6 +222,11 @@ namespace A1.Api.Controllers
             dealer.TelNo = string.IsNullOrWhiteSpace(dealer.TelNo) ? null : dealer.TelNo.Trim();
             dealer.MobileNo = string.IsNullOrWhiteSpace(dealer.MobileNo) ? null : dealer.MobileNo.Trim();
             dealer.Representative = string.IsNullOrWhiteSpace(dealer.Representative) ? null : dealer.Representative.Trim();
+            dealer.TitleAccount = string.IsNullOrWhiteSpace(dealer.TitleAccount)
+                ? null
+                : dealer.TitleAccount.Trim().Length > 100
+                    ? dealer.TitleAccount.Trim()[..100]
+                    : dealer.TitleAccount.Trim();
             dealer.IBAN = string.IsNullOrWhiteSpace(dealer.IBAN) ? null : dealer.IBAN.Trim();
         }
 
@@ -271,7 +277,6 @@ namespace A1.Api.Controllers
             }
 
             var normalizedName = dealer.Name.Trim().ToUpperInvariant();
-            var normalizedCnic = dealer.NtnCnic.Trim().ToUpperInvariant();
             var normalizedIban = string.IsNullOrWhiteSpace(dealer.IBAN)
                 ? null
                 : dealer.IBAN.Trim().ToUpperInvariant();
@@ -287,14 +292,6 @@ namespace A1.Api.Controllers
             if (duplicateName)
             {
                 return "An active dealer with this Name already exists.";
-            }
-
-            var duplicateCnic = await query.AnyAsync(d =>
-                d.NtnCnic != null &&
-                d.NtnCnic.ToUpper() == normalizedCnic);
-            if (duplicateCnic)
-            {
-                return "An active dealer with this NTN / CNIC already exists.";
             }
 
             if (!string.IsNullOrWhiteSpace(normalizedIban))

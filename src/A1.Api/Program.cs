@@ -68,8 +68,21 @@ builder.Services.AddSwaggerGen(c => { c.EnableAnnotations(); });
 
 
 // Configure ADO.NET and Generic Repository
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<AuditSaveChangesInterceptor>();
+
+var defaultConnectionString = ResolveSqlConnectionString(builder.Configuration);
+if (string.IsNullOrWhiteSpace(defaultConnectionString))
+{
+    throw new InvalidOperationException(
+        "Database connection string is not configured. Set ConnectionStrings:DefaultConnection (or DefaultConnection2) in appsettings.json or user secrets.");
+}
+
+builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
+{
+    options.UseSqlServer(defaultConnectionString);
+    options.AddInterceptors(sp.GetRequiredService<AuditSaveChangesInterceptor>());
+});
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddScoped<IClassService, ClassService>();
@@ -289,3 +302,24 @@ app.MapGet("/", () =>
 });
 
 app.Run();
+
+static string? ResolveSqlConnectionString(IConfiguration configuration)
+{
+    string?[] candidates =
+    {
+        configuration.GetConnectionString("DefaultConnection"),
+        configuration.GetConnectionString("DefaultConnection2"),
+        configuration["ConnectionStrings:DefaultConnection"],
+        configuration["ConnectionStrings:DefaultConnection2"],
+    };
+
+    foreach (var candidate in candidates)
+    {
+        if (!string.IsNullOrWhiteSpace(candidate))
+        {
+            return candidate.Trim();
+        }
+    }
+
+    return null;
+}

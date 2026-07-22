@@ -1,11 +1,32 @@
 using System.Data;
 using System.Data.Common;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace A1.Api.Utilities
 {
     public static class StoredProcedureReader
     {
+        /// <summary>
+        /// Opens a standalone connection for stored procedures. Do not dispose <see cref="DbContext.Database.GetDbConnection()"/> —
+        /// that connection is owned by the DbContext and disposing it breaks later EF queries in the same scope.
+        /// </summary>
+        private static async Task<SqlConnection> OpenStandaloneConnectionAsync(
+            DbContext context,
+            CancellationToken cancellationToken)
+        {
+            var connectionString = context.Database.GetConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "The database connection string is not configured. Set ConnectionStrings:DefaultConnection in appsettings.json.");
+            }
+
+            var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            return connection;
+        }
+
         public static void AddIntParameter(DbCommand command, string name, int? value)
         {
             var p = command.CreateParameter();
@@ -21,6 +42,15 @@ namespace A1.Api.Utilities
             p.ParameterName = name;
             p.DbType = DbType.Boolean;
             p.Value = value;
+            command.Parameters.Add(p);
+        }
+
+        public static void AddStringParameter(DbCommand command, string name, string? value)
+        {
+            var p = command.CreateParameter();
+            p.ParameterName = name;
+            p.DbType = DbType.String;
+            p.Value = string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
             command.Parameters.Add(p);
         }
 
@@ -51,11 +81,7 @@ namespace A1.Api.Utilities
             string totalCountParameterName = "@TotalCount",
             CancellationToken cancellationToken = default)
         {
-            await using var connection = context.Database.GetDbConnection();
-            if (connection.State != ConnectionState.Open)
-            {
-                await connection.OpenAsync(cancellationToken);
-            }
+            await using var connection = await OpenStandaloneConnectionAsync(context, cancellationToken);
 
             await using var command = connection.CreateCommand();
             command.CommandText = procedureName;
@@ -101,11 +127,7 @@ namespace A1.Api.Utilities
             Action<DbCommand> configure,
             CancellationToken cancellationToken = default)
         {
-            await using var connection = context.Database.GetDbConnection();
-            if (connection.State != ConnectionState.Open)
-            {
-                await connection.OpenAsync(cancellationToken);
-            }
+            await using var connection = await OpenStandaloneConnectionAsync(context, cancellationToken);
 
             await using var command = connection.CreateCommand();
             command.CommandText = procedureName;

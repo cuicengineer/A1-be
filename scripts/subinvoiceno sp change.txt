@@ -204,7 +204,7 @@ select * from (
     COALESCE(e.Months, f.Months) AS Months,
 
     COALESCE(e.CalculatedRentPM, f.CalculatedRentPM) AS CalculatedRentPM,
-    COALESCE(e.TotalRent, f.TotalRent) AS TotalRent,
+    COALESCE(et.TotalRent, e.TotalRent, f.TotalRent) AS TotalRent,
 
     COALESCE(e.Remarks, f.Remarks) AS Remarks,
 
@@ -228,8 +228,12 @@ select * from (
     COALESCE(e.ClassId, f.ClassId) AS ClassId,
 
     COALESCE(e.AmountReceived, rc.AmountReceived, f.AmountReceived) AS AmountReceived, --COALESCE(e.AmountReceived, f.AmountReceived) AS AmountReceived,
-    COALESCE(et.TotalRent, f.TotalRent) AS AmountReceivable,
-    COALESCE(e.AmountPending, f.Pending) AS AmountPending,
+    COALESCE(et.TotalRent, e.TotalRent, f.TotalRent) AS AmountReceivable,
+    CASE
+        WHEN et.TotalRent IS NOT NULL THEN
+            CAST(ROUND(et.TotalRent - COALESCE(e.AmountReceived, rc.AmountReceived, f.AmountReceived, 0), 2) AS DECIMAL(18, 2))
+        ELSE COALESCE(e.AmountPending, f.Pending)
+    END AS AmountPending,
 
     COALESCE(e.InvoiceStatus, f.InvoiceStatus) AS InvoiceStatus
 	-- Coming Due, Days Overdue are colored text set
@@ -257,14 +261,19 @@ FROM Final f
     LEFT JOIN
 (
     SELECT
+        ContractNo,
         InvoiceNo,
-        SUM(TotalRent) AS TotalRent
+        SUM(ISNULL(TotalRent, 0)) AS TotalRent
     FROM dbo.ContractInvoicesEdit
     WHERE ISNULL(InvoiceStatus,'') <> 'Deleted'
-      AND IsDeleted = 0
-    GROUP BY InvoiceNo
+      AND ISNULL(IsDeleted, 0) = 0
+      AND SubInvoiceNo IS NOT NULL
+      AND LTRIM(RTRIM(CAST(SubInvoiceNo AS NVARCHAR(50)))) <> ''
+      AND LTRIM(RTRIM(CAST(SubInvoiceNo AS NVARCHAR(50)))) <> '0'
+    GROUP BY ContractNo, InvoiceNo
 ) et
-    ON et.InvoiceNo = f.InvoiceNo
+    ON et.ContractNo = f.ContractNo
+   AND et.InvoiceNo = f.InvoiceNo
 	LEFT JOIN
 (
     SELECT

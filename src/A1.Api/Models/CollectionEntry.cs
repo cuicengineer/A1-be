@@ -15,6 +15,7 @@ namespace A1.Api.Models
         public DateTime? CollectionDate { get; set; }
         public decimal? Amount { get; set; }
         public string? TinTrn { get; set; }
+        public string? Remarks { get; set; }
         public string? Status { get; set; }
         public string? VrNo { get; set; }
         public DateTime? VrDate { get; set; }

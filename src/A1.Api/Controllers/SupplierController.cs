@@ -359,6 +359,7 @@ namespace A1.Api.Controllers
                 supplier.CoaId,
                 supplier.CoaId2,
                 Representative = dealer?.Representative ?? supplier.Representative,
+                TitleAccount = dealer?.TitleAccount ?? supplier.TitleAccount,
                 BankListsId = dealer?.BankListsId ?? supplier.BankListsId,
                 IBAN = dealer?.IBAN ?? supplier.IBAN,
                 Status = supplier.Status
@@ -379,6 +380,7 @@ namespace A1.Api.Controllers
             supplier.TelNo = dealer.TelNo;
             supplier.MobileNo = dealer.MobileNo;
             supplier.Representative = dealer.Representative;
+            supplier.TitleAccount = dealer.TitleAccount;
             supplier.BankListsId = dealer.BankListsId;
             supplier.IBAN = dealer.IBAN;
         }

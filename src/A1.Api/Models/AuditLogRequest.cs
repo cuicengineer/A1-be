@@ -9,7 +9,7 @@ namespace A1.Api.Models
         public long? EntityId { get; set; }
         public string? OldValuesJson { get; set; }
         public string? NewValuesJson { get; set; }
-        /// <summary>Source of the action: API, Web, or Job.</summary>
+        /// <summary>Source of the action: API (server edit), Web (client/Excel export), or Job.</summary>
         public string Action { get; set; } = "API";
     }
 }

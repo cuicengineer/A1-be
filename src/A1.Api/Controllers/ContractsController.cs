@@ -1,12 +1,10 @@
 using A1.Api.Models;
 using A1.Api.Repositories;
-using A1.Api.Services;
 using A1.Api.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
 using System.Security.Claims;
-using System.Text.Json;
 
 namespace A1.Api.Controllers
 {
@@ -25,18 +23,16 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<Contract> _repository;
         private readonly ApplicationDbContext _context;
-        private readonly IAuditLogService _auditLogService;
 
         public class SearchByGrpNameRequest
         {
             public string GrpName { get; set; } = string.Empty;
         }
 
-        public ContractsController(IGenericRepository<Contract> repository, ApplicationDbContext context, IAuditLogService auditLogService)
+        public ContractsController(IGenericRepository<Contract> repository, ApplicationDbContext context)
         {
             _repository = repository;
             _context = context;
-            _auditLogService = auditLogService;
         }
 
         /// <summary>
@@ -695,50 +691,6 @@ namespace A1.Api.Controllers
                 }
             }
 
-            var oldValuesJson = JsonSerializer.Serialize(new
-            {
-                existingContract.ContractNo,
-                existingContract.CmdId,
-                existingContract.BaseId,
-                existingContract.ClassId,
-                existingContract.GrpId,
-                existingContract.TenantNo,
-                existingContract.BusinessName,
-                existingContract.NatureOfBusiness,
-                existingContract.ContractStartDate,
-                existingContract.ContractEndDate,
-                existingContract.CommercialOperationDate,
-                existingContract.RiseTermType,
-                existingContract.RiseDate,
-                existingContract.RiseYear,
-                existingContract.InitialRentPM,
-                existingContract.InitialRentPA,
-                existingContract.currentRentPA,
-                existingContract.PaymentTermMonths,
-                existingContract.IncreaseRatePercent,
-                existingContract.IncreaseIntervalMonths,
-                existingContract.SDRateMonths,
-                existingContract.PaymentTiming,
-                existingContract.SecurityDepositAmount,
-                existingContract.RentalValue,
-                existingContract.GovtShare,
-                existingContract.PAFShare,
-                existingContract.GroupArea,
-                existingContract.GroupRate,
-                existingContract.RentalValueRate,
-                existingContract.VaArea,
-                existingContract.Dpc,
-                existingContract.Signatory,
-                existingContract.Status,
-                existingContract.ApprovalStatus,
-                existingContract.ApprovedBy,
-                existingContract.Term,
-                existingContract.userIPAddress,
-                existingContract.Remarks,
-                existingContract.ProfitRate,
-                existingContract.IsArchive
-            });
-
             // Update properties efficiently
             existingContract.ContractNo = updatedContractNo;
             existingContract.CmdId = contract.CmdId;
@@ -825,59 +777,6 @@ namespace A1.Api.Controllers
             }
 
             await _repository.UpdateAsync(existingContract);
-
-            var newValuesJson = JsonSerializer.Serialize(new
-            {
-                existingContract.ContractNo,
-                existingContract.CmdId,
-                existingContract.BaseId,
-                existingContract.ClassId,
-                existingContract.GrpId,
-                existingContract.TenantNo,
-                existingContract.BusinessName,
-                existingContract.NatureOfBusiness,
-                existingContract.ContractStartDate,
-                existingContract.ContractEndDate,
-                existingContract.CommercialOperationDate,
-                existingContract.RiseTermType,
-                existingContract.RiseDate,
-                existingContract.RiseYear,
-                existingContract.InitialRentPM,
-                existingContract.InitialRentPA,
-                existingContract.currentRentPA,
-                existingContract.PaymentTermMonths,
-                existingContract.IncreaseRatePercent,
-                existingContract.IncreaseIntervalMonths,
-                existingContract.SDRateMonths,
-                existingContract.PaymentTiming,
-                existingContract.SecurityDepositAmount,
-                existingContract.RentalValue,
-                existingContract.GovtShare,
-                existingContract.PAFShare,
-                existingContract.GroupArea,
-                existingContract.GroupRate,
-                existingContract.RentalValueRate,
-                existingContract.VaArea,
-                existingContract.Dpc,
-                existingContract.Signatory,
-                existingContract.Status,
-                existingContract.ApprovalStatus,
-                existingContract.ApprovedBy,
-                existingContract.Term,
-                existingContract.userIPAddress,
-                existingContract.Remarks,
-                existingContract.ProfitRate,
-                existingContract.IsArchive
-            });
-            await _auditLogService.LogAsync(new AuditLog
-            {
-                EntityName = "Contract",
-                EntityId = id,
-                OldValuesJson = oldValuesJson,
-                NewValuesJson = newValuesJson,
-                ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext),
-                Action = "API"
-            });
 
             return NoContent();
         }

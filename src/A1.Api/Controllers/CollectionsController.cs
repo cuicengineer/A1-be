@@ -115,6 +115,7 @@ namespace A1.Api.Controllers
             existing.CollectionDate = entry.CollectionDate;
             existing.Amount = entry.Amount;
             existing.TinTrn = entry.TinTrn;
+            existing.Remarks = entry.Remarks;
             existing.Status = entry.Status;
             existing.VrNo = entry.VrNo;
             existing.VrDate = entry.VrDate;

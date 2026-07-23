@@ -8,7 +8,7 @@ SET QUOTED_IDENTIFIER ON
 GO
 
 /*
-  fn_BasicContractInfo — Cat C / BTS share fix (v3)
+  fn_BasicContractInfo — Cat C / BTS share fix (v3) + Inv. Due/Paid amounts (v4)
 
   Diagnostic for C786AHQ-P786 showed:
     Stored: InitialRentPA=480000, GovtShare=6700, PAFShare=473300  (correct)
@@ -23,6 +23,18 @@ GO
           PAFShare  = MAX(0, InitialRentPA − GovtShare)
 
   Cat A / Cat B: unchanged area × revenue-rate formulas.
+
+  v4 Inv. Due / Paid / Rcvable:
+    due  = SUM of finalized + unlocked invoice totals (not a row count)
+    Per invoice total:
+      - prefer SUM(TotalRent) of item lines (SubInvoiceNo set, not blank/0)
+      - else header AmountReceivable/TotalRent (null/blank SubInvoiceNo)
+    Never add header + item lines (prevents inflated totals e.g. 35k → 125k).
+    Locked invoices excluded.
+  v5 Inv. Paid:
+    Sum ReceiptLines (not deleted) for the contract where TIN-TRN / TIN-FTN is
+    assigned — same source as agreement-prov-invoice "Received (TIN)" column.
+    Amount = Total when Total <> 0, else Amount.
 */
 
 ALTER FUNCTION [dbo].[fn_BasicContractInfo](@AsOfDate date)
@@ -94,17 +106,17 @@ RETURN
             ELSE NULL
         END,
 
-        ISNULL(inv.DueCount, 0) AS due,
-        ISNULL(paid.PaidCount, 0) AS paid,
-        ISNULL(inv.DueCount, 0) - ISNULL(paid.PaidCount, 0) AS rcvable,
+        ISNULL(inv.DueAmount, 0) AS due,
+        ISNULL(paid.PaidAmount, 0) AS paid,
+        ISNULL(inv.DueAmount, 0) - ISNULL(paid.PaidAmount, 0) AS rcvable,
         CASE
-            WHEN ISNULL(paid.PaidCount, 0) = 0
+            WHEN ISNULL(paid.PaidAmount, 0) = 0
                 THEN 'Unpaid'
-            WHEN ISNULL(paid.PaidCount, 0) < ISNULL(inv.DueCount, 0)
+            WHEN ISNULL(paid.PaidAmount, 0) < ISNULL(inv.DueAmount, 0)
                 THEN 'Partial Paid'
-            WHEN ISNULL(paid.PaidCount, 0) = ISNULL(inv.DueCount, 0)
+            WHEN ISNULL(paid.PaidAmount, 0) = ISNULL(inv.DueAmount, 0)
                 THEN 'Full Paid'
-            WHEN ISNULL(paid.PaidCount, 0) > ISNULL(inv.DueCount, 0)
+            WHEN ISNULL(paid.PaidAmount, 0) > ISNULL(inv.DueAmount, 0)
                 THEN 'Over Paid'
             ELSE NULL
         END AS invoices,
@@ -323,28 +335,132 @@ RETURN
 
     OUTER APPLY
     (
-        SELECT PaidCount = COUNT(*)
-        FROM dbo.ContractInvoicesEdit ci
-        WHERE ci.ContractNo = c.ContractNo
-          AND ci.SubInvoiceNo IS NULL
-          AND ci.IsFinalized = 1
-          AND EXISTS
-          (
-              SELECT 1
-              FROM dbo.Receipts r
-              WHERE (r.IsDeleted = 0 OR r.IsDeleted IS NULL)
-                AND r.FinalizedByAhq IS NOT NULL
-                AND r.LinesJson LIKE '%"' + ci.InvoiceNo + '"%'
-          )
+        /*
+          Inv. Paid: sum of ReceiptLines for this contract where TIN-TRN / TIN-FTN
+          is assigned (same logic as agreement-prov-invoice Received column).
+          Match by ReceiptLines.ContractNo, or by invoice belonging to this contract.
+        */
+        SELECT PaidAmount = ISNULL(SUM(
+            CASE
+                WHEN ISNULL(rl.Total, 0) <> 0 THEN ISNULL(rl.Total, 0)
+                ELSE ISNULL(rl.Amount, 0)
+            END
+        ), 0)
+        FROM dbo.ReceiptLines rl
+        INNER JOIN dbo.Receipts r
+            ON r.Id = rl.ReceiptId
+           AND ISNULL(r.IsDeleted, 0) = 0
+           AND (r.RecordType IS NULL OR r.RecordType = N'' OR r.RecordType = N'Receipt')
+        WHERE ISNULL(rl.IsDeleted, 0) = 0
+          AND (
+                (rl.TinTrn IS NOT NULL AND LTRIM(RTRIM(rl.TinTrn)) <> N'')
+                OR (rl.TinFtn IS NOT NULL AND LTRIM(RTRIM(rl.TinFtn)) <> N'')
+              )
+          AND (
+                (
+                    rl.ContractNo IS NOT NULL
+                    AND LTRIM(RTRIM(rl.ContractNo)) = c.ContractNo
+                )
+                OR (
+                    /* InvoiceKey shape: ContractNo|InvoiceNo */
+                    CHARINDEX(N'|', ISNULL(rl.InvoiceKey, N'')) > 0
+                    AND LTRIM(RTRIM(LEFT(rl.InvoiceKey, CHARINDEX(N'|', rl.InvoiceKey) - 1))) = c.ContractNo
+                    AND LEFT(LTRIM(RTRIM(rl.InvoiceKey)), 3) NOT IN (N'ce:', N'CE:')
+                )
+                OR EXISTS
+                (
+                    SELECT 1
+                    FROM dbo.ContractInvoicesEdit cie
+                    WHERE cie.ContractNo = c.ContractNo
+                      AND ISNULL(cie.IsDeleted, 0) = 0
+                      AND ISNULL(cie.InvoiceStatus, '') <> 'Deleted'
+                      AND (
+                            (
+                                rl.InvoiceNo IS NOT NULL
+                                AND LTRIM(RTRIM(rl.InvoiceNo)) <> N''
+                                AND LTRIM(RTRIM(rl.InvoiceNo)) = cie.InvoiceNo
+                            )
+                            OR (
+                                CHARINDEX(N'|', ISNULL(rl.InvoiceKey, N'')) > 0
+                                AND LTRIM(RTRIM(RIGHT(
+                                    rl.InvoiceKey,
+                                    CHARINDEX(N'|', REVERSE(rl.InvoiceKey)) - 1
+                                ))) = cie.InvoiceNo
+                            )
+                          )
+                )
+              )
     ) paid
 
     OUTER APPLY
     (
-        SELECT DueCount = COUNT(*)
-        FROM dbo.ContractInvoicesEdit ci
-        WHERE ci.ContractNo = c.ContractNo
-          AND ci.SubInvoiceNo IS NULL
-          AND ci.IsFinalized = 1
+        /*
+          Inv. Due: total amount of finalized invoices that are NOT locked.
+          Per invoice:
+            - if item lines exist (SubInvoiceNo set, not blank/0): SUM(TotalRent) of those lines only
+            - else: header AmountReceivable/TotalRent (null/blank SubInvoiceNo)
+          Never sum header + lines together (avoids 35k showing as ~125k).
+        */
+        SELECT DueAmount = ISNULL(SUM(d.InvoiceAmount), 0)
+        FROM
+        (
+            SELECT
+                inv.InvoiceNo,
+                InvoiceAmount =
+                    CASE
+                        WHEN lineTot.HasLines = 1 THEN ISNULL(lineTot.LineTotal, 0)
+                        ELSE ISNULL(hdr.HeaderTotal, 0)
+                    END
+            FROM
+            (
+                SELECT DISTINCT ci.InvoiceNo
+                FROM dbo.ContractInvoicesEdit ci
+                WHERE ci.ContractNo = c.ContractNo
+                  AND ISNULL(ci.IsDeleted, 0) = 0
+                  AND ISNULL(ci.InvoiceStatus, '') <> 'Deleted'
+                  AND ISNULL(ci.IsFinalized, 0) = 1
+                  AND NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM dbo.ContractInvoicesEdit lk
+                      WHERE lk.ContractNo = ci.ContractNo
+                        AND lk.InvoiceNo = ci.InvoiceNo
+                        AND ISNULL(lk.IsDeleted, 0) = 0
+                        AND ISNULL(lk.InvoiceStatus, '') <> 'Deleted'
+                        AND ISNULL(lk.IsLocked, 0) = 1
+                  )
+            ) inv
+            OUTER APPLY
+            (
+                SELECT
+                    HasLines = CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END,
+                    LineTotal = SUM(ISNULL(L.TotalRent, 0))
+                FROM dbo.ContractInvoicesEdit L
+                WHERE L.ContractNo = c.ContractNo
+                  AND L.InvoiceNo = inv.InvoiceNo
+                  AND ISNULL(L.IsDeleted, 0) = 0
+                  AND ISNULL(L.InvoiceStatus, '') <> 'Deleted'
+                  AND L.SubInvoiceNo IS NOT NULL
+                  AND LTRIM(RTRIM(CAST(L.SubInvoiceNo AS NVARCHAR(50)))) <> ''
+                  AND LTRIM(RTRIM(CAST(L.SubInvoiceNo AS NVARCHAR(50)))) <> '0'
+            ) lineTot
+            OUTER APPLY
+            (
+                SELECT TOP (1)
+                    HeaderTotal = COALESCE(H.AmountReceivable, H.TotalRent, 0)
+                FROM dbo.ContractInvoicesEdit H
+                WHERE H.ContractNo = c.ContractNo
+                  AND H.InvoiceNo = inv.InvoiceNo
+                  AND ISNULL(H.IsDeleted, 0) = 0
+                  AND ISNULL(H.InvoiceStatus, '') <> 'Deleted'
+                  AND ISNULL(H.IsFinalized, 0) = 1
+                  AND (
+                        H.SubInvoiceNo IS NULL
+                        OR LTRIM(RTRIM(CAST(H.SubInvoiceNo AS NVARCHAR(50)))) = ''
+                      )
+                ORDER BY H.Id
+            ) hdr
+        ) d
     ) inv
 
     WHERE (c.IsDeleted = 0 OR c.IsDeleted IS NULL)

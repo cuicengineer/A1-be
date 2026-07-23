@@ -18,6 +18,24 @@ namespace A1.Api.Models
         [MaxLength(250)]
         public string? AccountLabel { get; set; }
 
+        [MaxLength(100)]
+        public string? PartyKey { get; set; }
+
+        [MaxLength(50)]
+        public string? PartyType { get; set; }
+
+        [MaxLength(50)]
+        public string? PartyId { get; set; }
+
+        [MaxLength(100)]
+        public string? PartyCode { get; set; }
+
+        [MaxLength(300)]
+        public string? PartyName { get; set; }
+
+        [MaxLength(300)]
+        public string? PartyLabel { get; set; }
+
         [MaxLength(50)]
         public string? ContractId { get; set; }
 

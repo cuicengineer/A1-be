@@ -30,7 +30,15 @@ namespace A1.Api.Controllers
                 .OrderByDescending(x => x.Id)
                 .ToListAsync();
 
-            return Ok(rows);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                rows.Select(x => x.Id),
+                "CollectionEntries");
+            var response = AttachmentFlagHelper.ToDictionariesWithAttachmentFlag(
+                rows,
+                x => x.Id,
+                attachedIds);
+            return Ok(response);
         }
 
         [HttpGet("{id:int}")]
@@ -45,7 +53,13 @@ namespace A1.Api.Controllers
                 return NotFound();
             }
 
-            return Ok(row);
+            var attachedIds = await AttachmentFlagHelper.GetAttachedFormIdsAsync(
+                _context,
+                new[] { row.Id },
+                "CollectionEntries");
+            return Ok(AttachmentFlagHelper.ToDictionaryWithAttachmentFlag(
+                row,
+                attachedIds.Contains(row.Id)));
         }
 
         [HttpPost]

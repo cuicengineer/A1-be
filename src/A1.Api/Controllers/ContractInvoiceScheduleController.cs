@@ -948,7 +948,9 @@ namespace A1.Api.Controllers
             }
 
             await OverlayFinalizedFlagsFromHeaderEditsAsync(results, cancellationToken);
+            await OverlayLockedFlagsFromHeaderEditsAsync(results, cancellationToken);
             await OverlayReceivableFromInvoiceItemLinesAsync(results, cancellationToken);
+            await OverlayReceivedFromReceiptTinTrnLinesAsync(results, cancellationToken);
             return DeduplicateScheduleRowsByInvoice(results);
         }
 
@@ -1071,7 +1073,112 @@ namespace A1.Api.Controllers
                 row["AmountReceivable"] = receivable;
 
                 var received = ReadRowDecimal(row, "AmountReceived") ?? 0m;
-                row["AmountPending"] = Math.Max(0m, receivable - received);
+                // Balance may be negative when Received exceeds Receivable.
+                row["AmountPending"] = receivable - received;
+            }
+        }
+
+        /// <summary>
+        /// Grid "Received" = sum of ReceiptLines for the invoice where TIN-TRN/TIN-FTN is assigned.
+        /// Also refreshes AmountPending = Receivable - Received.
+        /// </summary>
+        private async Task OverlayReceivedFromReceiptTinTrnLinesAsync(
+            List<Dictionary<string, object?>> rows,
+            CancellationToken cancellationToken)
+        {
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            var invoiceNoSet = new HashSet<string>(
+                rows
+                    .Select(row => ReadRowString(row, "InvoiceNo"))
+                    .Where(invoiceNo => !string.IsNullOrWhiteSpace(invoiceNo)),
+                StringComparer.OrdinalIgnoreCase);
+
+            if (invoiceNoSet.Count == 0)
+            {
+                return;
+            }
+
+            var tinLines = await (
+                from rl in _context.ReceiptLines.AsNoTracking()
+                join r in _context.Receipts.AsNoTracking() on rl.ReceiptId equals r.Id
+                where (rl.IsDeleted == null || rl.IsDeleted == false)
+                      && (r.IsDeleted == null || r.IsDeleted == false)
+                      && (r.RecordType == null || r.RecordType == "" || r.RecordType == "Receipt")
+                      && (
+                          (rl.TinTrn != null && rl.TinTrn.Trim() != "")
+                          || (rl.TinFtn != null && rl.TinFtn.Trim() != "")
+                      )
+                select new
+                {
+                    InvoiceNo = rl.InvoiceNo ?? string.Empty,
+                    InvoiceKey = rl.InvoiceKey ?? string.Empty,
+                    Amount = rl.Total != 0m ? rl.Total : rl.Amount,
+                }
+            ).ToListAsync(cancellationToken);
+
+            if (tinLines.Count == 0)
+            {
+                return;
+            }
+
+            static string ResolveInvoiceNo(string invoiceNo, string invoiceKey)
+            {
+                var direct = (invoiceNo ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(direct))
+                {
+                    return direct;
+                }
+
+                var key = (invoiceKey ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    return string.Empty;
+                }
+
+                var parts = key.Split('|');
+                return parts.Length > 1 ? parts[^1].Trim() : key;
+            }
+
+            var receivedByInvoice = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in tinLines)
+            {
+                var invoiceNo = ResolveInvoiceNo(line.InvoiceNo, line.InvoiceKey);
+                if (string.IsNullOrWhiteSpace(invoiceNo) || !invoiceNoSet.Contains(invoiceNo))
+                {
+                    continue;
+                }
+
+                if (receivedByInvoice.TryGetValue(invoiceNo, out var current))
+                {
+                    receivedByInvoice[invoiceNo] = current + line.Amount;
+                }
+                else
+                {
+                    receivedByInvoice[invoiceNo] = line.Amount;
+                }
+            }
+
+            foreach (var row in rows)
+            {
+                var invoiceNo = ReadRowString(row, "InvoiceNo");
+                if (string.IsNullOrWhiteSpace(invoiceNo)
+                    || !receivedByInvoice.TryGetValue(invoiceNo, out var received))
+                {
+                    continue;
+                }
+
+                row["AmountReceived"] = received;
+
+                var receivable =
+                    ReadRowDecimal(row, "AmountReceivable")
+                    ?? ReadRowDecimal(row, "TotalRent")
+                    ?? 0m;
+                // Balance may be negative when Received exceeds Receivable.
+                row["AmountPending"] = receivable - received;
             }
         }
 
@@ -1166,6 +1273,74 @@ namespace A1.Api.Controllers
                 }
 
                 row["IsFinalized"] = 1;
+            }
+        }
+
+        /// <summary>
+        /// Ensure IsLocked on schedule rows reflects ContractInvoicesEdit lock state
+        /// (SP join can miss lock on some header shapes).
+        /// </summary>
+        private async Task OverlayLockedFlagsFromHeaderEditsAsync(
+            List<Dictionary<string, object?>> rows,
+            CancellationToken cancellationToken)
+        {
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            var keys = rows
+                .Select(row => new
+                {
+                    ContractNo = ReadRowString(row, "ContractNo"),
+                    InvoiceNo = ReadRowString(row, "InvoiceNo"),
+                })
+                .Where(key =>
+                    !string.IsNullOrWhiteSpace(key.ContractNo)
+                    && !string.IsNullOrWhiteSpace(key.InvoiceNo))
+                .Distinct()
+                .ToList();
+
+            if (keys.Count == 0)
+            {
+                return;
+            }
+
+            var contractNos = keys
+                .Select(key => key.ContractNo)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var invoiceNos = keys
+                .Select(key => key.InvoiceNo)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var lockedEdits = await _context.ContractInvoicesEdits
+                .AsNoTracking()
+                .Where(x =>
+                    contractNos.Contains(x.ContractNo!)
+                    && invoiceNos.Contains(x.InvoiceNo!)
+                    && x.IsLocked == true
+                    && (x.IsDeleted == null || x.IsDeleted == false))
+                .Select(x => new { x.ContractNo, x.InvoiceNo })
+                .ToListAsync(cancellationToken);
+
+            if (lockedEdits.Count == 0)
+            {
+                return;
+            }
+
+            var lockedKeys = new HashSet<string>(
+                lockedEdits.Select(x => $"{x.ContractNo}|{x.InvoiceNo}"),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var row in rows)
+            {
+                var key = $"{ReadRowString(row, "ContractNo")}|{ReadRowString(row, "InvoiceNo")}";
+                if (lockedKeys.Contains(key))
+                {
+                    row["IsLocked"] = 1;
+                }
             }
         }
 

@@ -59,6 +59,9 @@ namespace A1.Api.Services
         {
             entity.UoM = (entity.UoM ?? string.Empty).Trim();
             entity.Code = string.IsNullOrWhiteSpace(entity.Code) ? string.Empty : entity.Code.Trim().ToUpperInvariant();
+            entity.ItemWithCode = string.IsNullOrWhiteSpace(entity.ItemWithCode)
+                ? null
+                : entity.ItemWithCode.Trim();
             entity.IsDeleted = false;
             entity.Action = "CREATE";
             entity.ActionBy = actionBy;
@@ -82,6 +85,9 @@ namespace A1.Api.Services
             existing.Name = entity.Name;
             existing.Description = entity.Description;
             existing.UoM = (entity.UoM ?? string.Empty).Trim();
+            existing.ItemWithCode = string.IsNullOrWhiteSpace(entity.ItemWithCode)
+                ? null
+                : entity.ItemWithCode.Trim();
             existing.Status = entity.Status;
             existing.Action = "UPDATE";
             existing.ActionBy = actionBy;

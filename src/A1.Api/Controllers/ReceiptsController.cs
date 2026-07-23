@@ -62,6 +62,198 @@ namespace A1.Api.Controllers
             return Ok(row);
         }
 
+        /// <summary>
+        /// Receipt lines linked to an invoice with TIN-TRN / TIN-FTN assigned.
+        /// Same filter as agreement-prov-invoice Received / PDF receipt rows.
+        /// Route: GET /api/Receipts/lines-by-invoice?invoiceNo=&amp;contractNo=
+        /// </summary>
+        [HttpGet("lines-by-invoice")]
+        public async Task<IActionResult> GetTinLinesByInvoice(
+            [FromQuery] string invoiceNo,
+            [FromQuery] string? contractNo = null,
+            CancellationToken cancellationToken = default)
+        {
+            var targetInvoice = (invoiceNo ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(targetInvoice))
+            {
+                return BadRequest("invoiceNo is required.");
+            }
+
+            var targetContract = (contractNo ?? string.Empty).Trim();
+
+            var tinLines = await (
+                from rl in _context.ReceiptLines.AsNoTracking()
+                join r in _context.Receipts.AsNoTracking() on rl.ReceiptId equals r.Id
+                where (rl.IsDeleted == null || rl.IsDeleted == false)
+                      && (r.IsDeleted == null || r.IsDeleted == false)
+                      && (r.RecordType == null || r.RecordType == "" || r.RecordType == "Receipt")
+                      && (
+                          (rl.TinTrn != null && rl.TinTrn.Trim() != "")
+                          || (rl.TinFtn != null && rl.TinFtn.Trim() != "")
+                      )
+                select rl
+            ).ToListAsync(cancellationToken);
+
+            var collectionEntryIds = tinLines
+                .Select(x => (x.CollectionEntryId ?? string.Empty).Trim())
+                .Where(id => !string.IsNullOrWhiteSpace(id) && int.TryParse(id, out _))
+                .Select(int.Parse)
+                .Distinct()
+                .ToList();
+
+            var collectionInvoiceById = new Dictionary<int, string>();
+            if (collectionEntryIds.Count > 0)
+            {
+                var entries = await _context.CollectionEntries
+                    .AsNoTracking()
+                    .Where(x =>
+                        collectionEntryIds.Contains(x.Id)
+                        && (x.IsDeleted == null || x.IsDeleted == false))
+                    .Select(x => new { x.Id, x.InvoiceNo })
+                    .ToListAsync(cancellationToken);
+
+                foreach (var entry in entries)
+                {
+                    var inv = (entry.InvoiceNo ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(inv))
+                    {
+                        collectionInvoiceById[entry.Id] = inv;
+                    }
+                }
+            }
+
+            static string ResolveInvoiceNo(
+                string? invoiceNoValue,
+                string? invoiceKey,
+                string? collectionEntryId,
+                IReadOnlyDictionary<int, string> collectionInvoiceById)
+            {
+                var direct = (invoiceNoValue ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(direct))
+                {
+                    return direct;
+                }
+
+                var entryIdText = (collectionEntryId ?? string.Empty).Trim();
+                if (int.TryParse(entryIdText, out var entryId)
+                    && collectionInvoiceById.TryGetValue(entryId, out var fromEntry)
+                    && !string.IsNullOrWhiteSpace(fromEntry))
+                {
+                    return fromEntry.Trim();
+                }
+
+                var key = (invoiceKey ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    return string.Empty;
+                }
+
+                // Collection-entry option keys are not invoice numbers.
+                if (key.StartsWith("ce:", StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith("collectionentry:", StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith("entry:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var cePart = key.Contains(':') ? key[(key.IndexOf(':') + 1)..].Trim() : "";
+                    if (int.TryParse(cePart, out var ceId)
+                        && collectionInvoiceById.TryGetValue(ceId, out var fromKey)
+                        && !string.IsNullOrWhiteSpace(fromKey))
+                    {
+                        return fromKey.Trim();
+                    }
+
+                    return string.Empty;
+                }
+
+                var parts = key.Split('|');
+                return parts.Length > 1 ? parts[^1].Trim() : key;
+            }
+
+            bool MatchesInvoice(ReceiptLine line)
+            {
+                var lineInvoice = ResolveInvoiceNo(
+                    line.InvoiceNo,
+                    line.InvoiceKey,
+                    line.CollectionEntryId,
+                    collectionInvoiceById);
+                if (!string.IsNullOrWhiteSpace(lineInvoice)
+                    && string.Equals(lineInvoice, targetInvoice, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                var key = (line.InvoiceKey ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    return false;
+                }
+
+                if (string.Equals(key, targetInvoice, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(targetContract)
+                    && string.Equals(
+                        key,
+                        $"{targetContract}|{targetInvoice}",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                var parts = key.Split('|');
+                foreach (var part in parts)
+                {
+                    if (string.Equals(part.Trim(), targetInvoice, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            var matched = tinLines
+                .Where(MatchesInvoice)
+                .OrderBy(x => x.ReceiptId)
+                .ThenBy(x => x.LineNo)
+                .ThenBy(x => x.Id)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.ReceiptId,
+                    x.LineNo,
+                    x.Item,
+                    x.Account,
+                    x.AccountCoaId,
+                    x.PartyKey,
+                    x.PartyType,
+                    x.PartyId,
+                    x.PartyCode,
+                    x.PartyName,
+                    x.PartyLabel,
+                    x.ContractId,
+                    x.InvoiceKey,
+                    x.ContractNo,
+                    x.InvoiceNo,
+                    x.CollectionEntryId,
+                    x.TinTrn,
+                    x.TinFtn,
+                    x.Amount,
+                    x.UnitPrice,
+                    x.Quantity,
+                    x.ProductKey,
+                    x.ProductType,
+                    x.ProductId,
+                    x.Discount,
+                    x.Tax,
+                    x.Total,
+                })
+                .ToList();
+
+            return Ok(matched);
+        }
+
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] Receipt receipt)
         {
@@ -196,10 +388,50 @@ namespace A1.Api.Controllers
             existing.Action = "DELETE";
             existing.ActionBy = ActionByHelper.GetActionByWithIp(User, HttpContext, existing.ActionBy);
 
+            await ClearLinkedCollectionEntriesAsync(existing);
             await ReceiptLineHelper.SoftDeleteLinesAsync(_context, id, existing.ActionBy);
             _context.Receipts.Update(existing);
             await _context.SaveChangesAsync();
             return NoContent();
+        }
+
+        /// <summary>
+        /// When a receipt is deleted, clear Vr No / Vr Date / ReceiptId on linked collections
+        /// and set Status back to Pending.
+        /// </summary>
+        private async Task ClearLinkedCollectionEntriesAsync(Receipt receipt)
+        {
+            var receiptId = receipt.Id;
+            var reference = (receipt.Reference ?? string.Empty).Trim();
+            var vrNo = (receipt.VrNo ?? string.Empty).Trim();
+
+            var linked = await _context.CollectionEntries
+                .Where(x =>
+                    (x.IsDeleted == null || x.IsDeleted == false) &&
+                    (
+                        x.ReceiptId == receiptId ||
+                        (!string.IsNullOrWhiteSpace(reference) && x.VrNo == reference) ||
+                        (!string.IsNullOrWhiteSpace(vrNo) && x.VrNo == vrNo)
+                    ))
+                .ToListAsync();
+
+            if (linked.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var entry in linked)
+            {
+                entry.VrNo = null;
+                entry.VrDate = null;
+                entry.ReceiptId = null;
+                entry.Status = "Pending";
+                entry.Action = "UPDATE";
+                entry.ActionDate = DateTime.UtcNow;
+                entry.ActionBy = receipt.ActionBy;
+            }
+
+            _context.CollectionEntries.UpdateRange(linked);
         }
 
         private static string? ValidateReceipt(Receipt receipt, IReadOnlyList<ReceiptLine> lines)

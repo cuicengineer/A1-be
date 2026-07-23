@@ -187,7 +187,7 @@ namespace A1.Api.Controllers
 
         private static Receipt MapPaymentRow(PaymentRow item)
         {
-            item.row.ReceivedFromAccountDisplay = FormatAccountLabel(item.AcctId, item.AccountName);
+            item.row.PaidFromAccountDisplay = FormatAccountLabel(item.AcctId, item.AccountName);
             return item.row;
         }
 
@@ -226,7 +226,7 @@ namespace A1.Api.Controllers
 
             if (payment.CashAndBankAccountId == null || payment.CashAndBankAccountId <= 0)
             {
-                return "Received from account is required.";
+                return "Paid From account is required.";
             }
 
             if (string.IsNullOrWhiteSpace(payment.PayeeName))

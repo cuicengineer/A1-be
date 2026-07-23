@@ -23,16 +23,21 @@ namespace A1.Api.Controllers
     {
         private readonly IGenericRepository<Contract> _repository;
         private readonly ApplicationDbContext _context;
+        private readonly ILogger<ContractsController> _logger;
 
         public class SearchByGrpNameRequest
         {
             public string GrpName { get; set; } = string.Empty;
         }
 
-        public ContractsController(IGenericRepository<Contract> repository, ApplicationDbContext context)
+        public ContractsController(
+            IGenericRepository<Contract> repository,
+            ApplicationDbContext context,
+            ILogger<ContractsController> logger)
         {
             _repository = repository;
             _context = context;
+            _logger = logger;
         }
 
         /// <summary>
@@ -50,49 +55,427 @@ namespace A1.Api.Controllers
                 return BadRequest("asOfDate query parameter is required.");
             }
 
-            await using var connection = _context.Database.GetDbConnection();
-            if (connection.State != ConnectionState.Open)
-            {
-                await connection.OpenAsync(cancellationToken);
-            }
-
-            await using var command = connection.CreateCommand();
-            command.CommandText = "dbo.sp_GetActiveContractsAsOfDate";
-            command.CommandType = CommandType.StoredProcedure;
-
-            var param = command.CreateParameter();
-            param.ParameterName = "@AsOfDate";
-            param.DbType = DbType.Date;
-            param.Value = asOfDate.Date;
-            command.Parameters.Add(param);
-
-            command.CommandTimeout = 120;
-
-            var results = new List<Dictionary<string, object?>>();
-
-            await using var reader = await command.ExecuteReaderAsync(
-                CommandBehavior.SequentialAccess | CommandBehavior.CloseConnection,
+            // Use a standalone pooled SqlConnection for the SP — never dispose
+            // DbContext.Database.GetDbConnection() (that breaks EF under concurrent load).
+            var results = await StoredProcedureReader.ExecuteAsync(
+                _context,
+                "dbo.sp_GetActiveContractsAsOfDate",
+                command =>
+                {
+                    var param = command.CreateParameter();
+                    param.ParameterName = "@AsOfDate";
+                    param.DbType = DbType.Date;
+                    param.Value = asOfDate.Date;
+                    command.Parameters.Add(param);
+                },
                 cancellationToken);
 
-            var fieldCount = reader.FieldCount;
-            var names = new string[fieldCount];
-            for (int i = 0; i < fieldCount; i++)
+            // Overlay runs on EF's own pooled connection after the SP connection is released.
+            try
             {
-                names[i] = reader.GetName(i);
+                await OverlayInvPaidFromReceiptTinTrnLinesAsync(results, cancellationToken);
             }
-
-            while (await reader.ReadAsync(cancellationToken))
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                var row = new Dictionary<string, object?>(fieldCount, StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < fieldCount; i++)
-                {
-                    var value = reader.GetValue(i);
-                    row[names[i]] = value == DBNull.Value ? null : value;
-                }
-                results.Add(row);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Never fail the contracts as-of grid if TIN paid overlay breaks.
+                _logger.LogWarning(
+                    ex,
+                    "Inv. Paid TIN overlay failed for ActiveByAsOfDate ({AsOfDate}); returning SP values.",
+                    asOfDate.Date);
             }
 
             return Ok(results);
+        }
+
+        /// <summary>
+        /// Inv. Paid on contracts grid = sum of ReceiptLines for the contract where
+        /// TIN-TRN / TIN-FTN is assigned (same source as agreement-prov Received).
+        /// Also refreshes Inv. Rcvable and Invoices status from due - paid.
+        /// Only overwrites paid/rcvable/invoices when TIN totals are found; never clears shares/due.
+        /// </summary>
+        private async Task OverlayInvPaidFromReceiptTinTrnLinesAsync(
+            List<Dictionary<string, object?>> rows,
+            CancellationToken cancellationToken)
+        {
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            var contractNoSet = new HashSet<string>(
+                rows
+                    .Select(row => ReadContractRowString(row, "ContractNo"))
+                    .Where(contractNo => !string.IsNullOrWhiteSpace(contractNo)),
+                StringComparer.OrdinalIgnoreCase);
+
+            if (contractNoSet.Count == 0)
+            {
+                return;
+            }
+
+            // Materialize for EF Contains translation (typical grid size is hundreds, not millions).
+            var contractNos = contractNoSet.ToList();
+
+            // Aggregate in SQL for lines that already have ContractNo — cheap under concurrency.
+            var paidByContract = await (
+                from rl in _context.ReceiptLines.AsNoTracking()
+                join r in _context.Receipts.AsNoTracking() on rl.ReceiptId equals r.Id
+                where (rl.IsDeleted == null || rl.IsDeleted == false)
+                      && (r.IsDeleted == null || r.IsDeleted == false)
+                      && (r.RecordType == null || r.RecordType == "" || r.RecordType == "Receipt")
+                      && rl.ContractNo != null
+                      && rl.ContractNo != ""
+                      && contractNos.Contains(rl.ContractNo)
+                      && (
+                          (rl.TinTrn != null && rl.TinTrn.Trim() != "")
+                          || (rl.TinFtn != null && rl.TinFtn.Trim() != "")
+                      )
+                group rl by rl.ContractNo into g
+                select new
+                {
+                    ContractNo = g.Key!,
+                    Paid = g.Sum(x => x.Total != 0m ? x.Total : x.Amount),
+                }
+            ).ToDictionaryAsync(
+                x => x.ContractNo,
+                x => x.Paid,
+                StringComparer.OrdinalIgnoreCase,
+                cancellationToken);
+
+            // Resolve remaining TIN lines that lack ContractNo (via InvoiceNo / InvoiceKey / collection entry).
+            var unresolvedContracts = contractNos
+                .Where(cn => !paidByContract.ContainsKey(cn))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (unresolvedContracts.Count > 0)
+            {
+                var orphanTinLines = await (
+                    from rl in _context.ReceiptLines.AsNoTracking()
+                    join r in _context.Receipts.AsNoTracking() on rl.ReceiptId equals r.Id
+                    where (rl.IsDeleted == null || rl.IsDeleted == false)
+                          && (r.IsDeleted == null || r.IsDeleted == false)
+                          && (r.RecordType == null || r.RecordType == "" || r.RecordType == "Receipt")
+                          && (rl.ContractNo == null || rl.ContractNo == "")
+                          && (
+                              (rl.TinTrn != null && rl.TinTrn.Trim() != "")
+                              || (rl.TinFtn != null && rl.TinFtn.Trim() != "")
+                          )
+                    select new
+                    {
+                        InvoiceNo = rl.InvoiceNo ?? string.Empty,
+                        InvoiceKey = rl.InvoiceKey ?? string.Empty,
+                        CollectionEntryId = rl.CollectionEntryId ?? string.Empty,
+                        Amount = rl.Total != 0m ? rl.Total : rl.Amount,
+                    }
+                ).ToListAsync(cancellationToken);
+
+                if (orphanTinLines.Count > 0)
+                {
+                    await AccumulateOrphanTinPaidByContractAsync(
+                        orphanTinLines
+                            .Select(x => (
+                                x.InvoiceNo,
+                                x.InvoiceKey,
+                                x.CollectionEntryId,
+                                x.Amount))
+                            .ToList(),
+                        unresolvedContracts,
+                        paidByContract,
+                        cancellationToken);
+                }
+            }
+
+            if (paidByContract.Count == 0)
+            {
+                // Keep SP-computed paid/due/rcvable/shares untouched.
+                return;
+            }
+
+            foreach (var row in rows)
+            {
+                var contractNo = ReadContractRowString(row, "ContractNo");
+                if (string.IsNullOrWhiteSpace(contractNo))
+                {
+                    continue;
+                }
+
+                // Only overlay when we have TIN totals for this contract; otherwise keep SP values.
+                if (!paidByContract.TryGetValue(contractNo, out var paid))
+                {
+                    continue;
+                }
+
+                ApplyContractPaidOverlay(row, paid);
+            }
+        }
+
+        private async Task AccumulateOrphanTinPaidByContractAsync(
+            List<(string InvoiceNo, string InvoiceKey, string CollectionEntryId, decimal Amount)> orphanTinLines,
+            HashSet<string> unresolvedContracts,
+            Dictionary<string, decimal> paidByContract,
+            CancellationToken cancellationToken)
+        {
+            static string ResolveInvoiceNo(string invoiceNo, string invoiceKey)
+            {
+                var direct = (invoiceNo ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(direct))
+                {
+                    return direct;
+                }
+
+                var key = (invoiceKey ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(key)
+                    || key.StartsWith("ce:", StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith("collectionentry:", StringComparison.OrdinalIgnoreCase)
+                    || key.StartsWith("entry:", StringComparison.OrdinalIgnoreCase))
+                {
+                    return string.Empty;
+                }
+
+                var parts = key.Split('|');
+                return parts.Length > 1 ? parts[^1].Trim() : key;
+            }
+
+            static string ResolveContractNoFromKey(string invoiceKey)
+            {
+                var key = (invoiceKey ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(key)
+                    || key.StartsWith("ce:", StringComparison.OrdinalIgnoreCase))
+                {
+                    return string.Empty;
+                }
+
+                var sep = key.IndexOf('|');
+                return sep > 0 ? key[..sep].Trim() : string.Empty;
+            }
+
+            var collectionEntryIds = orphanTinLines
+                .Select(line =>
+                {
+                    var idText = (line.CollectionEntryId ?? string.Empty).Trim();
+                    if (int.TryParse(idText, out var id))
+                    {
+                        return id;
+                    }
+
+                    var key = (line.InvoiceKey ?? string.Empty).Trim();
+                    if (key.StartsWith("ce:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var cePart = key[(key.IndexOf(':') + 1)..].Trim();
+                        if (int.TryParse(cePart, out var ceId))
+                        {
+                            return ceId;
+                        }
+                    }
+
+                    return 0;
+                })
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+
+            var collectionInvoiceById = new Dictionary<int, string>();
+            if (collectionEntryIds.Count > 0)
+            {
+                var entries = await _context.CollectionEntries
+                    .AsNoTracking()
+                    .Where(x =>
+                        collectionEntryIds.Contains(x.Id)
+                        && (x.IsDeleted == null || x.IsDeleted == false))
+                    .Select(x => new { x.Id, x.InvoiceNo, x.ContractNo })
+                    .ToListAsync(cancellationToken);
+
+                foreach (var entry in entries)
+                {
+                    var inv = (entry.InvoiceNo ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(inv))
+                    {
+                        collectionInvoiceById[entry.Id] = inv;
+                    }
+
+                    var cn = (entry.ContractNo ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(cn)
+                        && unresolvedContracts.Contains(cn)
+                        && !string.IsNullOrWhiteSpace(inv))
+                    {
+                        // Prefer direct contract from collection entry when present.
+                    }
+                }
+            }
+
+            var invoiceNos = orphanTinLines
+                .Select(line =>
+                {
+                    var invoiceNo = ResolveInvoiceNo(line.InvoiceNo, line.InvoiceKey);
+                    if (!string.IsNullOrWhiteSpace(invoiceNo))
+                    {
+                        return invoiceNo;
+                    }
+
+                    if (int.TryParse((line.CollectionEntryId ?? string.Empty).Trim(), out var entryId)
+                        && collectionInvoiceById.TryGetValue(entryId, out var fromEntry))
+                    {
+                        return fromEntry;
+                    }
+
+                    return string.Empty;
+                })
+                .Where(invoiceNo => !string.IsNullOrWhiteSpace(invoiceNo))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var invoiceToContract = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (invoiceNos.Count > 0)
+            {
+                var editRows = await _context.ContractInvoicesEdits
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.InvoiceNo != null
+                        && invoiceNos.Contains(x.InvoiceNo)
+                        && (x.IsDeleted == null || x.IsDeleted == false)
+                        && (x.InvoiceStatus == null || x.InvoiceStatus != "Deleted"))
+                    .Select(x => new { x.InvoiceNo, x.ContractNo })
+                    .ToListAsync(cancellationToken);
+
+                foreach (var edit in editRows)
+                {
+                    var invoiceNo = (edit.InvoiceNo ?? string.Empty).Trim();
+                    var contractNo = (edit.ContractNo ?? string.Empty).Trim();
+                    if (string.IsNullOrWhiteSpace(invoiceNo)
+                        || string.IsNullOrWhiteSpace(contractNo)
+                        || !unresolvedContracts.Contains(contractNo))
+                    {
+                        continue;
+                    }
+
+                    if (!invoiceToContract.ContainsKey(invoiceNo))
+                    {
+                        invoiceToContract[invoiceNo] = contractNo;
+                    }
+                }
+            }
+
+            foreach (var line in orphanTinLines)
+            {
+                var contractNo = ResolveContractNoFromKey(line.InvoiceKey);
+                if (string.IsNullOrWhiteSpace(contractNo))
+                {
+                    var invoiceNo = ResolveInvoiceNo(line.InvoiceNo, line.InvoiceKey);
+                    if (string.IsNullOrWhiteSpace(invoiceNo)
+                        && int.TryParse((line.CollectionEntryId ?? string.Empty).Trim(), out var entryId)
+                        && collectionInvoiceById.TryGetValue(entryId, out var fromEntry))
+                    {
+                        invoiceNo = fromEntry;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(invoiceNo)
+                        && invoiceToContract.TryGetValue(invoiceNo, out var mappedContract))
+                    {
+                        contractNo = mappedContract;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(contractNo) || !unresolvedContracts.Contains(contractNo))
+                {
+                    continue;
+                }
+
+                if (paidByContract.TryGetValue(contractNo, out var current))
+                {
+                    paidByContract[contractNo] = current + line.Amount;
+                }
+                else
+                {
+                    paidByContract[contractNo] = line.Amount;
+                }
+            }
+        }
+
+        private static void ApplyContractPaidOverlay(Dictionary<string, object?> row, decimal paid)
+        {
+            SetContractRowValue(row, "paid", paid);
+            SetContractRowValue(row, "PaidAmount", paid);
+
+            var due =
+                ReadContractRowDecimal(row, "due")
+                ?? ReadContractRowDecimal(row, "Due")
+                ?? ReadContractRowDecimal(row, "DueAmount");
+            if (due == null)
+            {
+                // Keep existing rcvable/invoices from SP when due is missing.
+                return;
+            }
+
+            var rcvable = due.Value - paid;
+            SetContractRowValue(row, "rcvable", rcvable);
+            SetContractRowValue(row, "Receivable", rcvable);
+            SetContractRowValue(row, "Rcvable", rcvable);
+
+            string invoices;
+            if (paid == 0m)
+            {
+                invoices = "Unpaid";
+            }
+            else if (paid < due.Value)
+            {
+                invoices = "Partial Paid";
+            }
+            else if (paid == due.Value)
+            {
+                invoices = "Full Paid";
+            }
+            else
+            {
+                invoices = "Over Paid";
+            }
+
+            SetContractRowValue(row, "invoices", invoices);
+            SetContractRowValue(row, "Invoices", invoices);
+        }
+
+        private static void SetContractRowValue(Dictionary<string, object?> row, string key, object? value)
+        {
+            foreach (var existingKey in row.Keys)
+            {
+                if (string.Equals(existingKey, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    row[existingKey] = value;
+                    return;
+                }
+            }
+
+            row[key] = value;
+        }
+
+        private static string ReadContractRowString(Dictionary<string, object?> row, string key)
+        {
+            if (row.TryGetValue(key, out var value) && value != null)
+            {
+                return Convert.ToString(value)?.Trim() ?? string.Empty;
+            }
+
+            return string.Empty;
+        }
+
+        private static decimal? ReadContractRowDecimal(Dictionary<string, object?> row, string key)
+        {
+            if (!row.TryGetValue(key, out var value) || value == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return Convert.ToDecimal(value);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>

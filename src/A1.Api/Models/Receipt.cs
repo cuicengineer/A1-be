@@ -29,11 +29,19 @@ namespace A1.Api.Models
         /// <summary>Payment voucher number (e.g. TE-0001/2025).</summary>
         public string? VrNo { get; set; }
 
-        /// <summary>Cash &amp; Bank account the payment is received from.</summary>
+        /// <summary>Cash &amp; Bank account the payment is paid from.</summary>
         public int? CashAndBankAccountId { get; set; }
 
         [NotMapped]
-        public string? ReceivedFromAccountDisplay { get; set; }
+        public string? PaidFromAccountDisplay { get; set; }
+
+        /// <summary>Legacy alias for PaidFromAccountDisplay (API clients).</summary>
+        [NotMapped]
+        public string? ReceivedFromAccountDisplay
+        {
+            get => PaidFromAccountDisplay;
+            set => PaidFromAccountDisplay = value;
+        }
 
         [NotMapped]
         public List<ReceiptLine>? Lines { get; set; }

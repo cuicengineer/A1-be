@@ -111,6 +111,12 @@ namespace A1.Api.Utilities
                     AccountSource = TrimToNull(source.AccountSource, 20),
                     AccountCoaId = TrimToNull(source.AccountCoaId, 50),
                     AccountLabel = TrimToNull(source.AccountLabel, 250),
+                    PartyKey = TrimToNull(source.PartyKey, 100),
+                    PartyType = TrimToNull(source.PartyType, 50),
+                    PartyId = TrimToNull(source.PartyId, 50),
+                    PartyCode = TrimToNull(source.PartyCode, 100),
+                    PartyName = TrimToNull(source.PartyName, 300),
+                    PartyLabel = TrimToNull(source.PartyLabel, 300),
                     ContractId = TrimToNull(source.ContractId, 50),
                     ContractNo = TrimToNull(source.ContractNo, 100),
                     InvoiceKey = TrimToNull(source.InvoiceKey, 100),
@@ -137,6 +143,12 @@ namespace A1.Api.Utilities
                     AccountSource = TrimToNull(source.AccountSource, 20),
                     AccountCoaId = TrimToNull(source.AccountCoaId, 50),
                     AccountLabel = TrimToNull(source.AccountLabel, 250),
+                    PartyKey = TrimToNull(source.PartyKey, 100),
+                    PartyType = TrimToNull(source.PartyType, 50),
+                    PartyId = TrimToNull(source.PartyId, 50),
+                    PartyCode = TrimToNull(source.PartyCode, 100),
+                    PartyName = TrimToNull(source.PartyName, 300),
+                    PartyLabel = TrimToNull(source.PartyLabel, 300),
                     ContractId = TrimToNull(source.ContractId, 50),
                     ContractNo = TrimToNull(source.ContractNo, 100),
                     InvoiceKey = TrimToNull(source.InvoiceKey, 100),
@@ -193,6 +205,12 @@ namespace A1.Api.Utilities
                         AccountSource = TrimToNull(line.AccountSource, 20),
                         AccountCoaId = TrimToNull(line.AccountCoaId, 50),
                         AccountLabel = TrimToNull(line.AccountLabel, 250),
+                        PartyKey = TrimToNull(line.PartyKey, 100),
+                        PartyType = TrimToNull(line.PartyType, 50),
+                        PartyId = TrimToNull(line.PartyId, 50),
+                        PartyCode = TrimToNull(line.PartyCode, 100),
+                        PartyName = TrimToNull(line.PartyName, 300),
+                        PartyLabel = TrimToNull(line.PartyLabel, 300),
                         ContractId = TrimToNull(line.ContractId, 50),
                         ContractNo = TrimToNull(line.ContractNo, 100),
                         InvoiceKey = TrimToNull(line.InvoiceKey, 100),
@@ -251,6 +269,12 @@ namespace A1.Api.Utilities
                 AccountSource = TrimToNull(dto.AccountSource, 20),
                 AccountCoaId = TrimToNull(dto.AccountCoaId, 50),
                 AccountLabel = TrimToNull(dto.AccountLabel, 250),
+                PartyKey = TrimToNull(dto.PartyKey, 100),
+                PartyType = TrimToNull(dto.PartyType, 50),
+                PartyId = TrimToNull(dto.PartyId, 50),
+                PartyCode = TrimToNull(dto.PartyCode, 100),
+                PartyName = TrimToNull(dto.PartyName, 300),
+                PartyLabel = TrimToNull(dto.PartyLabel, 300),
                 ContractId = TrimToNull(dto.ContractId, 50),
                 ContractNo = TrimToNull(dto.ContractNo, 100),
                 InvoiceKey = TrimToNull(dto.InvoiceKey, 100),
@@ -335,6 +359,12 @@ namespace A1.Api.Utilities
             public string? AccountSource { get; set; }
             public string? AccountCoaId { get; set; }
             public string? AccountLabel { get; set; }
+            public string? PartyKey { get; set; }
+            public string? PartyType { get; set; }
+            public string? PartyId { get; set; }
+            public string? PartyCode { get; set; }
+            public string? PartyName { get; set; }
+            public string? PartyLabel { get; set; }
             public string? ContractId { get; set; }
             public string? ContractNo { get; set; }
             public string? InvoiceKey { get; set; }

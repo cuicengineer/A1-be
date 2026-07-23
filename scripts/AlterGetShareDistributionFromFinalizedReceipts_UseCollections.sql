@@ -15,6 +15,15 @@ GO
       - Amount > 0, resolvable ContractId and InvoiceNo present
       - One output row per ContractId (receipt amounts aggregated by contract)
       - @AsOfDate applies to fn_BasicContractInfo only (legacy receipt SP did not filter lines by date)
+
+    Share balancing (so leaf shares reconcilable to ReceiptAmount):
+      - Govt is prorated, then clamped to [0, ReceiptAmount]
+      - PAF = ReceiptAmount - Govt
+      - AHQ / RAC / BaseShareRaw from sharing-formula rates on PAF
+      - If Govt + AHQ + RAC + BaseShareRaw > ReceiptAmount, force:
+            PAF = ReceiptAmount - Govt
+            BaseShare = PAF - AHQ - RAC
+        so Govt + AHQ + RAC + BaseShare = ReceiptAmount
 */
 ALTER PROCEDURE [dbo].[sp_GetShareDistributionFromFinalizedReceipts]
     @AsOfDate DATE
@@ -101,6 +110,7 @@ ContractBase AS
         c.BaseId,
         c.ClassId,
         RACName = COALESCE(NULLIF(rac.[Name], ''''), ''''),
+        b.Code AS BaseCode,
         b.[Name] AS BaseName,
         b.FullName AS BaseFullName,
         t.OwnerName AS TenantOwnerName,
@@ -175,7 +185,9 @@ Calculated AS
         cb.VaArea,
         cb.GroupArea,
         cb.CmdId,
+        cb.BaseId,
         cb.RACName,
+        cb.BaseCode,
         cb.BaseName,
         cb.BaseFullName,
         cb.TenantOwnerName,
@@ -196,9 +208,9 @@ Calculated AS
                 WHEN cb.CurrentRentPA IS NULL THEN NULL
                 ELSE CAST(ROUND(ISNULL(cb.CurrentRentPA, 0) - cb.ReceiptAmount, 2) AS DECIMAL(18, 2))
             END,
-        Govt =
+        GovtRaw =
             CASE
-                WHEN NULLIF(cb.CurrentRentPA, 0) IS NULL THEN 0
+                WHEN NULLIF(cb.CurrentRentPA, 0) IS NULL THEN CAST(0 AS DECIMAL(18, 2))
                 ELSE CAST(ROUND(ISNULL(cb.GovtSharePA, 0) * (cb.ReceiptAmount / NULLIF(cb.CurrentRentPA, 0)), 2) AS DECIMAL(18, 2))
             END,
         lsf.AHQRate,
@@ -211,16 +223,40 @@ Calculated AS
 ShareCalc AS
 (
     SELECT
-        *,
-        PAF = CAST(ROUND(ReceiptAmount - Govt, 2) AS DECIMAL(18, 2))
-    FROM Calculated
+        c.*,
+        -- Clamp Govt so it never exceeds ReceiptAmount
+        Govt =
+            CASE
+                WHEN c.GovtRaw < 0 THEN CAST(0 AS DECIMAL(18, 2))
+                WHEN c.GovtRaw > c.ReceiptAmount THEN c.ReceiptAmount
+                ELSE c.GovtRaw
+            END
+    FROM Calculated c
+),
+ShareParts AS
+(
+    SELECT
+        sc.*,
+        -- PAF is always the residual of ReceiptAmount after Govt
+        PAF = CAST(ROUND(sc.ReceiptAmount - sc.Govt, 2) AS DECIMAL(18, 2))
+    FROM ShareCalc sc
+),
+ShareFinal AS
+(
+    SELECT
+        sp.*,
+        AHQ = CAST(ROUND(sp.PAF * ISNULL(sp.AHQRate, 0) / 100.0, 2) AS DECIMAL(18, 2)),
+        RAC = CAST(ROUND(sp.PAF * ISNULL(sp.RACRate, 0) / 100.0, 2) AS DECIMAL(18, 2)),
+        BaseShareRaw = CAST(ROUND(sp.PAF * ISNULL(sp.BaseRate, 0) / 100.0, 2) AS DECIMAL(18, 2))
+    FROM ShareParts sp
 )
 SELECT
     SN = ROW_NUMBER() OVER (ORDER BY ReceiptDate DESC, ContractNo),
     Id,
     ContractNo,
+    BaseId,
     RACName,
-    Base = COALESCE(NULLIF(BaseFullName, ''''), NULLIF(BaseName, ''''), ''''),
+    Base = COALESCE(NULLIF(BaseCode, ''''), NULLIF(BaseName, ''''), NULLIF(BaseFullName, ''''), ''''),
     Class = COALESCE(NULLIF(ClassName, ''''), NULLIF(ClassCode, ''''), ''''),
     Agreement =
         CASE
@@ -252,22 +288,21 @@ SELECT
     Ratio,
     Govt,
     PAF,
-    AHQ = CAST(ROUND(PAF * ISNULL(AHQRate, 0) / 100.0, 2) AS DECIMAL(18, 2)),
-    RAC = CAST(ROUND(PAF * ISNULL(RACRate, 0) / 100.0, 2) AS DECIMAL(18, 2)),
+    AHQ,
+    RAC,
+    -- When rate-based leaf shares overrun ReceiptAmount, force residual BaseShare
+    -- so Govt + AHQ + RAC + BaseShare = ReceiptAmount (PAF = ReceiptAmount - Govt).
     BaseShare =
-        CAST(
-            ROUND(
-                PAF
-                - ROUND(PAF * ISNULL(AHQRate, 0) / 100.0, 2)
-                - ROUND(PAF * ISNULL(RACRate, 0) / 100.0, 2),
-                2
-            ) AS DECIMAL(18, 2)
-        ),
+        CASE
+            WHEN (Govt + AHQ + RAC + BaseShareRaw) > ReceiptAmount
+            THEN CAST(ROUND(PAF - AHQ - RAC, 2) AS DECIMAL(18, 2))
+            ELSE BaseShareRaw
+        END,
     Workbook = ISNULL(WorkbookNo, ''''),
     CAId = ContractNo,
     CAArea1 = VaArea,
     CAArea2 = COALESCE(GroupArea, AreaBase, VaArea)
-FROM ShareCalc
+FROM ShareFinal
 ORDER BY ReceiptDate DESC, ContractNo;';
 
     SET @PrintSql = REPLACE(@Sql, N'@AsOfDate', QUOTENAME(@AsOfDateLiteral, ''''));

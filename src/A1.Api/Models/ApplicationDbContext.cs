@@ -67,6 +67,7 @@ namespace A1.Api.Models
         public DbSet<TaxCode> TaxCodes { get; set; }
         public DbSet<SalesReturn> SalesReturns { get; set; }
         public DbSet<PurchaseReturn> PurchaseReturns { get; set; }
+        public DbSet<PurchaseInvoice> PurchaseInvoices { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -401,6 +402,7 @@ namespace A1.Api.Models
             modelBuilder.Entity<Class>(e =>
             {
                 e.Property(x => x.UoM).HasMaxLength(20);
+                e.Property(x => x.ItemWithCode).HasMaxLength(100);
             });
 
             modelBuilder.Entity<Base>(e =>
@@ -497,6 +499,12 @@ namespace A1.Api.Models
                 e.Property(x => x.AccountSource).HasMaxLength(20);
                 e.Property(x => x.AccountCoaId).HasMaxLength(50);
                 e.Property(x => x.AccountLabel).HasMaxLength(250);
+                e.Property(x => x.PartyKey).HasMaxLength(100);
+                e.Property(x => x.PartyType).HasMaxLength(50);
+                e.Property(x => x.PartyId).HasMaxLength(50);
+                e.Property(x => x.PartyCode).HasMaxLength(100);
+                e.Property(x => x.PartyName).HasMaxLength(300);
+                e.Property(x => x.PartyLabel).HasMaxLength(300);
                 e.Property(x => x.ContractId).HasMaxLength(50);
                 e.Property(x => x.ContractNo).HasMaxLength(100);
                 e.Property(x => x.InvoiceKey).HasMaxLength(100);
@@ -603,6 +611,18 @@ namespace A1.Api.Models
                 e.Property(x => x.SupplierCode).HasMaxLength(50);
                 e.Property(x => x.PurchaseInvoiceNo).HasMaxLength(100);
                 e.Property(x => x.PurchaseInvoiceLabel).HasMaxLength(300);
+                e.Property(x => x.Description).HasMaxLength(500);
+                e.Property(x => x.GrandTotal).HasColumnType("decimal(18,2)");
+                e.Property(x => x.LinesJson).HasColumnType("nvarchar(max)");
+                e.Property(x => x.Action).HasMaxLength(50);
+                e.Property(x => x.ActionBy).HasMaxLength(150);
+            });
+
+            modelBuilder.Entity<PurchaseInvoice>(e =>
+            {
+                e.ToTable("PurchaseInvoices", "dbo");
+                e.Property(x => x.Date).HasColumnType("date");
+                e.Property(x => x.PiNo).HasMaxLength(50);
                 e.Property(x => x.Description).HasMaxLength(500);
                 e.Property(x => x.GrandTotal).HasColumnType("decimal(18,2)");
                 e.Property(x => x.LinesJson).HasColumnType("nvarchar(max)");
